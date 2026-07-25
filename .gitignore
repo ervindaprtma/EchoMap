@@ -1,0 +1,27 @@
+# env / secrets
+.env
+*.local
+
+# backend
+/backend/bin/
+/backend/echomap
+*.exe
+
+# frontend
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.vite/
+*.tsbuildinfo
+/frontend/vite.config.js
+/frontend/vite.config.d.ts
+
+# local agent/tooling state (personal settings + agent worktrees)
+.claude/
+
+# markdown docs — keep only README.md tracked; design docs (PRD, 01–05) stay local
+*.md
+!README.md
+
+# misc
+.DS_Store
+*.log

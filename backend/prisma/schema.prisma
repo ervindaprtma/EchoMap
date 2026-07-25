@@ -1,0 +1,416 @@
+// EchoMap — Prisma mirror of the canonical SQL schema:
+//   backend/migrations/0001_init.sql + 0002_add_monitoring_features.sql
+//
+// The SQL migrations are the source of truth (applied via docker-entrypoint-initdb.d).
+// This file exists for teams using Prisma tooling (client generation, Studio).
+// Do NOT run `prisma migrate` against a live EchoMap database — apply the SQL files.
+//
+// Fidelity notes (Prisma limitations, all enforced by the SQL layer):
+// - subnets.cidr (CIDR) and interfaces.mac_address (MACADDR) have no native Prisma
+//   type and are modeled as String.
+// - CHECK constraints (edges source<>target, services port range, icons mime,
+//   settings singleton id=1) are not expressible here.
+// - devices.netbox_id is a partial unique index in SQL; @unique is equivalent
+//   in behavior since Postgres treats NULLs as distinct.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---- Enumerated types ----
+
+enum DeviceStatus {
+  UP
+  DOWN
+  ORPHANED
+  UNKNOWN
+
+  @@map("device_status")
+}
+
+enum SourceType {
+  MANUAL
+  NETBOX
+  DISCOVERY
+
+  @@map("source_type")
+}
+
+enum NameSource {
+  NETBOX
+  SNMP_SYSNAME
+  MANUAL
+  IP
+
+  @@map("name_source")
+}
+
+enum LinkType {
+  AUTO
+  MANUAL
+
+  @@map("link_type")
+}
+
+enum AlertChannel {
+  EMAIL
+  TELEGRAM
+
+  @@map("alert_channel")
+}
+
+enum SyncStatus {
+  SUCCESS
+  PARTIAL
+  FAILED
+
+  @@map("sync_status")
+}
+
+enum ServiceKind {
+  HTTP
+  HTTPS
+  SSH
+  TELNET
+  CUSTOM_URL
+
+  @@map("service_kind")
+}
+
+// Why a device is DOWN (Doc 3 §5); the column is NULL while UP.
+enum DownReason {
+  PROBE
+  PARENT
+
+  @@map("down_reason")
+}
+
+// ---- Models ----
+
+model Subnet {
+  id          BigInt      @id @default(autoincrement())
+  cidr        String      @unique // Postgres CIDR column
+  site        String?
+  description String?
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  devices     Device[]
+  interfaces  Interface[]
+
+  @@map("subnets")
+}
+
+model Device {
+  id             BigInt        @id @default(autoincrement())
+  ipAddress      String        @unique @map("ip_address") @db.Inet
+  hostname       String?       @unique // optional FQDN; resolver keeps ipAddress fresh (Doc 3 §6)
+  name           String
+  nameSource     NameSource    @default(IP) @map("name_source")
+  manualName     String?       @map("manual_name")
+  sourceType     SourceType    @default(MANUAL) @map("source_type")
+  netboxId       Int?          @unique @map("netbox_id")
+  subnetId       BigInt?       @map("subnet_id")
+  subnet         Subnet?       @relation(fields: [subnetId], references: [id], onDelete: SetNull)
+
+  status         DeviceStatus  @default(UNKNOWN)
+  previousStatus DeviceStatus? @map("previous_status")
+  downReason     DownReason?   @map("down_reason") // 'PROBE' | 'PARENT' while DOWN, else NULL
+  isFlapping     Boolean       @default(false) @map("is_flapping")
+  upStreak       Int           @default(0) @map("up_streak")
+  downStreak     Int           @default(0) @map("down_streak")
+  lastChangeAt   DateTime?     @map("last_change_at") @db.Timestamptz(6)
+  lastSeenAt     DateTime?     @map("last_seen_at") @db.Timestamptz(6)
+
+  snmpEnabled    Boolean       @default(false) @map("snmp_enabled")
+  snmpVersion    String?       @map("snmp_version")
+  snmpCommunity  String?       @map("snmp_community") // encrypted at rest (app-layer AES-256-GCM)
+  sysObjectId    String?       @map("sys_object_id")
+  sysDescr       String?       @map("sys_descr")
+  sysName        String?       @map("sys_name")
+  vendor         String?
+  model          String?
+  icon           String        @default("host")
+  iconId         BigInt?       @map("icon_id")
+  customIcon     Icon?         @relation(fields: [iconId], references: [id], onDelete: SetNull)
+
+  // Dependency & placement. Parent cycles are rejected app-side (walk-up check).
+  parentDeviceId BigInt?       @map("parent_device_id")
+  parent         Device?       @relation("DeviceDependency", fields: [parentDeviceId], references: [id], onDelete: SetNull)
+  children       Device[]      @relation("DeviceDependency")
+  mapId          BigInt?       @map("map_id")
+  map            Map?          @relation(fields: [mapId], references: [id], onDelete: SetNull)
+
+  posX           Float?        @map("pos_x")
+  posY           Float?        @map("pos_y")
+  isLocked       Boolean       @default(false) @map("is_locked")
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  interfaces     Interface[]
+  sourceEdges    Edge[]             @relation("EdgeSource")
+  targetEdges    Edge[]             @relation("EdgeTarget")
+  alertRules     AlertRule[]
+  alertEvents    AlertEvent[]
+  transitions    StatusTransition[]
+  services       DeviceService[]
+
+  @@index([status], map: "idx_devices_status")
+  @@index([sourceType], map: "idx_devices_source_type")
+  @@index([subnetId], map: "idx_devices_subnet")
+  @@index([parentDeviceId], map: "idx_devices_parent")
+  @@index([mapId], map: "idx_devices_map")
+  @@map("devices")
+}
+
+model Interface {
+  id          BigInt   @id @default(autoincrement())
+  deviceId    BigInt   @map("device_id")
+  device      Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  ifIndex     Int?     @map("if_index")
+  ifName      String?  @map("if_name")
+  ipAddress   String?  @map("ip_address") @db.Inet
+  subnetId    BigInt?  @map("subnet_id")
+  subnet      Subnet?  @relation(fields: [subnetId], references: [id], onDelete: SetNull)
+  macAddress  String?  @map("mac_address") // Postgres MACADDR column
+  isUplink    Boolean  @default(false) @map("is_uplink")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  sourceEdges Edge[]   @relation("EdgeSourceIface")
+  targetEdges Edge[]   @relation("EdgeTargetIface")
+
+  @@unique([deviceId, ifIndex])
+  @@index([deviceId], map: "idx_interfaces_device")
+  @@index([subnetId], map: "idx_interfaces_subnet")
+  @@map("interfaces")
+}
+
+model Edge {
+  id                BigInt     @id @default(autoincrement())
+  sourceDeviceId    BigInt     @map("source_device_id")
+  targetDeviceId    BigInt     @map("target_device_id")
+  sourceDevice      Device     @relation("EdgeSource", fields: [sourceDeviceId], references: [id], onDelete: Cascade)
+  targetDevice      Device     @relation("EdgeTarget", fields: [targetDeviceId], references: [id], onDelete: Cascade)
+  sourceInterfaceId BigInt?    @map("source_interface_id")
+  targetInterfaceId BigInt?    @map("target_interface_id")
+  sourceInterface   Interface? @relation("EdgeSourceIface", fields: [sourceInterfaceId], references: [id], onDelete: SetNull)
+  targetInterface   Interface? @relation("EdgeTargetIface", fields: [targetInterfaceId], references: [id], onDelete: SetNull)
+  linkType          LinkType   @default(AUTO) @map("link_type")
+  label             String?
+  createdAt         DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([sourceDeviceId, targetDeviceId, linkType])
+  @@index([sourceDeviceId], map: "idx_edges_source")
+  @@index([targetDeviceId], map: "idx_edges_target")
+  @@index([linkType], map: "idx_edges_type")
+  @@map("edges")
+}
+
+model AlertRule {
+  id         BigInt       @id @default(autoincrement())
+  deviceId   BigInt?      @map("device_id") // NULL = global rule
+  device     Device?      @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  channel    AlertChannel
+  target     String
+  onDown     Boolean      @default(true) @map("on_down")
+  onUp       Boolean      @default(true) @map("on_up")
+  onFlapping Boolean      @default(true) @map("on_flapping")
+  onOrphaned Boolean      @default(true) @map("on_orphaned")
+  enabled    Boolean      @default(true)
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([deviceId], map: "idx_alert_rules_device")
+  @@map("alert_rules")
+}
+
+model AlertEvent {
+  id         BigInt        @id @default(autoincrement())
+  deviceId   BigInt        @map("device_id")
+  device     Device        @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  fromStatus DeviceStatus? @map("from_status")
+  toStatus   DeviceStatus  @map("to_status")
+  isFlapping Boolean       @default(false) @map("is_flapping")
+  channel    AlertChannel
+  delivered  Boolean       @default(false)
+  error      String?
+  firedAt    DateTime      @default(now()) @map("fired_at") @db.Timestamptz(6)
+
+  @@index([deviceId, firedAt(sort: Desc)], map: "idx_alert_events_device")
+  @@map("alert_events")
+}
+
+model StatusTransition {
+  id        BigInt       @id @default(autoincrement())
+  deviceId  BigInt       @map("device_id")
+  device    Device       @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  toStatus  DeviceStatus @map("to_status")
+  changedAt DateTime     @default(now()) @map("changed_at") @db.Timestamptz(6)
+
+  @@index([deviceId, changedAt(sort: Desc)], map: "idx_transitions_device_time")
+  @@map("status_transitions")
+}
+
+model NetboxSyncLog {
+  id          BigInt     @id @default(autoincrement())
+  runAt       DateTime   @default(now()) @map("run_at") @db.Timestamptz(6)
+  status      SyncStatus
+  ipsAdded    Int        @default(0) @map("ips_added")
+  ipsUpdated  Int        @default(0) @map("ips_updated")
+  ipsOrphaned Int        @default(0) @map("ips_orphaned")
+  ipsRestored Int        @default(0) @map("ips_restored")
+  durationMs  Int?       @map("duration_ms")
+  error       String?
+
+  @@index([runAt(sort: Desc)], map: "idx_sync_logs_run")
+  @@map("netbox_sync_logs")
+}
+
+// Singleton (SQL enforces id = 1 via CHECK). Secrets encrypted at rest app-side.
+model Settings {
+  id                   Int      @id @default(1) @db.SmallInt
+  netboxUrl            String?  @map("netbox_url")
+  netboxToken          String?  @map("netbox_token") // encrypted at rest
+  netboxSyncEnabled    Boolean  @default(true) @map("netbox_sync_enabled")
+  snmpDefaultVersion   String?  @default("v2c") @map("snmp_default_version")
+  snmpDefaultCommunity String?  @map("snmp_default_community") // encrypted at rest
+  pingIntervalSeconds  Int      @default(20) @map("ping_interval_seconds")
+  smtpConfig           Json?    @map("smtp_config")
+  telegramBotToken     String?  @map("telegram_bot_token") // encrypted at rest
+
+  // Alert message templates (Go text/template; NULL = built-in default — Doc 3 §7)
+  telegramTemplate     String?  @map("telegram_template")
+  emailSubjectTemplate String?  @map("email_subject_template")
+  emailBodyTemplate    String?  @map("email_body_template")
+
+  dnsRecheckSeconds    Int      @default(300) @map("dns_recheck_seconds")
+  websshUrl            String?  @map("webssh_url") // HTML5 SSH gateway; NULL = ssh:// handler only
+  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("settings")
+}
+
+// ---- 0002: maps / icons / services / designs ----
+
+model Map {
+  id          BigInt   @id @default(autoincrement())
+  parentMapId BigInt?  @map("parent_map_id")
+  parent      Map?     @relation("MapTree", fields: [parentMapId], references: [id], onDelete: Cascade)
+  children    Map[]    @relation("MapTree")
+  name        String
+  posX        Float?   @map("pos_x") // submap-node position on the PARENT canvas
+  posY        Float?   @map("pos_y")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  devices     Device[]
+
+  @@unique([parentMapId, name])
+  @@index([parentMapId], map: "idx_maps_parent")
+  @@map("maps")
+}
+
+model Icon {
+  id        BigInt   @id @default(autoincrement())
+  name      String   @unique
+  category  String?  // folder/library name, e.g. the imported draw.io library
+  mime      String   // 'image/svg+xml' | 'image/png' (CHECK in SQL)
+  data      Bytes
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  devices   Device[]
+
+  @@map("icons")
+}
+
+// Right-click launchers. NO credential columns — by design (security rule #1):
+// SSH/Telnet entries only hand off to the user's own client or web-SSH gateway.
+model DeviceService {
+  id        BigInt      @id @default(autoincrement())
+  deviceId  BigInt      @map("device_id")
+  device    Device      @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  label     String
+  kind      ServiceKind
+  port      Int?        // NULL = kind default (80/443/22/23); 1–65535 CHECK in SQL
+  path      String?     // optional HTTP(S) URL path
+  url       String?     // CUSTOM_URL only; may contain {ip} / {hostname}
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([deviceId], map: "idx_services_device")
+  @@map("device_services")
+}
+
+// Standalone topology designer. Deliberately relation-free: decoupled from monitoring.
+model Design {
+  id        BigInt   @id @default(autoincrement())
+  name      String   @unique
+  graph     Json     // opaque React Flow document
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("designs")
+}
+
+// ==== v1.1 Phase 8 (migration 0003) — users, sessions, event logs ====
+
+enum UserRole {
+  SUPERADMIN
+  ADMIN
+  OPERATOR
+
+  @@map("user_role")
+}
+
+enum LogLevel {
+  INFO
+  NOTICE
+  ALERT
+  ERROR
+  AUDIT
+
+  @@map("log_level")
+}
+
+model User {
+  id                 BigInt    @id @default(autoincrement())
+  username           String    @unique
+  passwordHash       String    @map("password_hash") // argon2id
+  role               UserRole  @default(OPERATOR)
+  enabled            Boolean   @default(true)
+  mustChangePassword Boolean   @default(false) @map("must_change_password")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  sessions           Session[]
+
+  @@map("users")
+}
+
+model Session {
+  id         BigInt   @id @default(autoincrement())
+  tokenHash  Bytes    @unique @map("token_hash") // sha256(raw token)
+  userId     BigInt   @map("user_id")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ip         String?  @db.Inet
+  userAgent  String?  @map("user_agent")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastSeenAt DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+
+  @@index([userId], map: "idx_sessions_user")
+  @@map("sessions")
+}
+
+// deviceId / userId carry ON DELETE SET NULL FKs in SQL (Doc 2 §4.3); modeled as
+// scalars here to avoid back-relations on Device/User — the SQL layer enforces them.
+model EventLog {
+  id       BigInt   @id @default(autoincrement())
+  ts       DateTime @default(now()) @db.Timestamptz(6)
+  level    LogLevel
+  category String   // 'device'|'monitor'|'alert'|'auth'|'config'|'system'
+  message  String
+  deviceId BigInt?  @map("device_id")
+  userId   BigInt?  @map("user_id")
+  meta     Json?
+
+  @@index([ts(sort: Desc)], map: "idx_event_logs_ts")
+  @@index([level, ts(sort: Desc)], map: "idx_event_logs_level_ts")
+  @@map("event_logs")
+}

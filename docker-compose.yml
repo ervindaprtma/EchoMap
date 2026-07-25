@@ -1,0 +1,101 @@
+services:
+  # ---- Application: REST API + WebSocket hub ----
+  app:
+    build: ./backend
+    image: echomap:latest
+    command: ["/app/echomap", "--role=api"]
+    env_file: [.env]
+    environment:
+      APP_ROLE: api
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://echomap:echomap@postgres:5432/echomap?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      INFLUX_URL: http://influxdb:8086
+      INFLUX_ORG: echomap
+      INFLUX_BUCKET: ping_metrics
+    ports:
+      - "8080:8080"       # REST + WS
+    cap_add:
+      - NET_RAW           # on-demand single-shot pings (test reachability)
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      influxdb: { condition: service_healthy }
+    restart: unless-stopped
+
+  # ---- Workers: ping / snmp / discovery / netbox-sync / notifier ----
+  worker:
+    build: ./backend
+    image: echomap:latest
+    command: ["/app/echomap", "--role=worker"]
+    env_file: [.env]
+    environment:
+      APP_ROLE: worker
+      DATABASE_URL: postgres://echomap:echomap@postgres:5432/echomap?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      INFLUX_URL: http://influxdb:8086
+      INFLUX_ORG: echomap
+      INFLUX_BUCKET: ping_metrics
+    cap_add:
+      - NET_RAW           # continuous ICMP ping loop lives here
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      influxdb: { condition: service_healthy }
+    restart: unless-stopped
+
+  # ---- Relational store (schema auto-applied from ./backend/migrations on first boot) ----
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: echomap
+      POSTGRES_PASSWORD: echomap
+      POSTGRES_DB: echomap
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U echomap -d echomap"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ---- Queue + Pub/Sub + Cache ----
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ---- Time-series store ----
+  influxdb:
+    image: influxdb:2.7
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: echomap
+      DOCKER_INFLUXDB_INIT_PASSWORD: echomapadmin
+      DOCKER_INFLUXDB_INIT_ORG: echomap
+      DOCKER_INFLUXDB_INIT_BUCKET: ping_metrics
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN}
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdata:/var/lib/influxdb2
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  influxdata:
