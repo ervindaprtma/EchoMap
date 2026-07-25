@@ -157,6 +157,7 @@ model Device {
   alertEvents    AlertEvent[]
   transitions    StatusTransition[]
   services       DeviceService[]
+  monitors       DeviceMonitor[]
 
   @@index([status], map: "idx_devices_status")
   @@index([sourceType], map: "idx_devices_source_type")
@@ -286,6 +287,13 @@ model Settings {
 
   dnsRecheckSeconds    Int      @default(300) @map("dns_recheck_seconds")
   websshUrl            String?  @map("webssh_url") // HTML5 SSH gateway; NULL = ssh:// handler only
+
+  // Per-event-class custom sounds (0004, Phase 9 schema / Phase 11 UI); NULL = built-in chime.
+  soundDeviceDownId    BigInt?  @map("sound_device_down_id")
+  soundDeviceUpId      BigInt?  @map("sound_device_up_id")
+  soundMonitorDownId   BigInt?  @map("sound_monitor_down_id")
+  soundMonitorUpId     BigInt?  @map("sound_monitor_up_id")
+
   updatedAt            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@map("settings")
@@ -413,4 +421,69 @@ model EventLog {
   @@index([ts(sort: Desc)], map: "idx_event_logs_ts")
   @@index([level, ts(sort: Desc)], map: "idx_event_logs_level_ts")
   @@map("event_logs")
+}
+
+// ==== v1.1 Phase 9 (migration 0004) — custom monitors + alert sounds ====
+
+enum MonitorKind {
+  TCP
+  HTTP
+  HTTPS
+
+  @@map("monitor_kind")
+}
+
+enum MonitorStatus {
+  UP
+  DOWN
+  UNKNOWN
+
+  @@map("monitor_status")
+}
+
+// Custom per-device port/URL checks (PRD P13). Same debounce state machine as devices.
+model DeviceMonitor {
+  id             BigInt        @id @default(autoincrement())
+  deviceId       BigInt        @map("device_id")
+  device         Device        @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  label          String
+  kind           MonitorKind
+  port           Int?          // required for TCP; kind default for HTTP(S); 1–65535 CHECK in SQL
+  path           String?
+  urlOverride    String?       @map("url_override")
+  expectStatusLo Int           @default(200) @map("expect_status_lo")
+  expectStatusHi Int           @default(399) @map("expect_status_hi")
+  intervalSeconds Int          @default(60) @map("interval_seconds") // 10–86400 CHECK in SQL
+  timeoutMs      Int           @default(5000) @map("timeout_ms")
+  enabled        Boolean       @default(true)
+
+  status         MonitorStatus @default(UNKNOWN)
+  upStreak       Int           @default(0) @map("up_streak")
+  downStreak     Int           @default(0) @map("down_streak")
+  lastChangeAt   DateTime?     @map("last_change_at") @db.Timestamptz(6)
+  lastCheckAt    DateTime?     @map("last_check_at") @db.Timestamptz(6)
+  nextCheckAt    DateTime?     @map("next_check_at") @db.Timestamptz(6)
+  lastDurationMs Float?        @map("last_duration_ms")
+  lastHttpStatus Int?          @map("last_http_status")
+  certExpiresAt  DateTime?     @map("cert_expires_at") @db.Timestamptz(6)
+
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([deviceId, label])
+  @@index([nextCheckAt], map: "idx_monitors_due")
+  @@index([deviceId], map: "idx_monitors_device")
+  @@map("device_monitors")
+}
+
+// Uploaded .wav notification sounds (schema in 0004; upload/assign UI is Phase 11).
+// The settings.sound_*_id columns (see Settings model) reference this; modeled as
+// scalars there to avoid back-relations.
+model AlertSound {
+  id        BigInt   @id @default(autoincrement())
+  name      String   @unique
+  data      Bytes
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("alert_sounds")
 }

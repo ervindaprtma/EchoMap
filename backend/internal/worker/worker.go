@@ -26,9 +26,14 @@ func Run(ctx context.Context, cfg config.Config, st *store.Store, b *bus.Bus, tw
 	if b != nil {
 		pub = b // avoid a typed-nil interface: only assign when non-nil
 	}
+	alerter := notify.NewTelegram(st) // no-op until a bot token + TELEGRAM rule are configured
 	mon := monitor.New(st, pub, tw)
-	mon.Alerter = notify.NewTelegram(st) // no-op until a bot token + TELEGRAM rule are configured
-	mon.Events = st                      // INFO-log confirmed transitions to event_logs (Doc 3 §10)
+	mon.Alerter = alerter
+	mon.Events = st // INFO-log confirmed transitions to event_logs (Doc 3 §10)
+
+	// Custom port/URL monitors run on their own cursor-driven loop (Doc 3 §9),
+	// beside the ping loop and the resolver, sharing the same alerter/store/tsdb.
+	go runMonitorScheduler(ctx, st, b, tw, alerter, cfg.DiscoveryConcurrency)
 
 	interval := time.Duration(cfg.PingIntervalSeconds) * time.Second
 

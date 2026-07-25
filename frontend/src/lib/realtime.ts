@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import type { Device, DeviceList, DownReason, DeviceStatus, TopologyResponse } from "@/lib/types"
-import { fireAlert } from "@/lib/alerts"
+import { fireAlert, fireMonitorAlert, type MonitorFrame } from "@/lib/alerts"
 
 interface StatusEvent {
   type: string
@@ -67,6 +67,14 @@ export function useRealtime(): boolean {
         if (ev.type === "device.updated") {
           const u = ev as UpdatedEvent
           patchDevice(qc, u.device_id, { ip_address: u.ip_address })
+          return
+        }
+        if (ev.type === "monitor.status") {
+          const m = ev as unknown as MonitorFrame & { device_id: number }
+          // Refresh the device's monitor list (the Monitoring tab shows live status)
+          // and sound/pop-up per this browser's prefs.
+          qc.invalidateQueries({ queryKey: ["monitors", m.device_id] })
+          fireMonitorAlert(m)
           return
         }
         if (ev.type !== "device.status") return

@@ -87,3 +87,30 @@ export interface DeviceService {
   path: string | null
   url: string | null
 }
+
+export type MonitorKind = "TCP" | "HTTP" | "HTTPS"
+export type MonitorStatus = "UP" | "DOWN" | "UNKNOWN"
+
+// Custom per-device port/URL monitor (Doc 5 §8.4, Phase 9).
+export interface DeviceMonitor {
+  id: number
+  device_id: number
+  label: string
+  kind: MonitorKind
+  port: number | null
+  path: string | null
+  url_override: string | null
+  expect_status_lo: number
+  expect_status_hi: number
+  interval_seconds: number
+  timeout_ms: number
+  enabled: boolean
+  status: MonitorStatus
+  last_change_at: string | null
+  last_check_at: string | null
+  last_duration_ms: number | null
+  last_http_status: number | null
+  cert_expires_at: string | null
+  created_at: string
+  updated_at: string
+}

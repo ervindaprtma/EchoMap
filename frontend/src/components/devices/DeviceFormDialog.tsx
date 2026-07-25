@@ -16,6 +16,7 @@ import { IconPicker } from "./IconPicker"
 import { MapSelect } from "./MapSelect"
 import { ParentSelect } from "./ParentSelect"
 import { ServicesEditor } from "./ServicesEditor"
+import { MonitorsEditor } from "./MonitorsEditor"
 
 // Create + edit dialog (Doc 4 §3.2). Controlled inputs + server-side validation:
 // the API's error strings (cycle, duplicate, unresolvable hostname) surface
@@ -124,6 +125,7 @@ export function DeviceFormDialog({
           <TabsList className={editing ? "" : "hidden"}>
             <TabsTrigger value="general">General</TabsTrigger>
             {editing && <TabsTrigger value="services">Services</TabsTrigger>}
+            {editing && <TabsTrigger value="monitoring">Monitoring</TabsTrigger>}
           </TabsList>
 
           <TabsContent value="general" className="space-y-4 pt-2">
@@ -196,6 +198,12 @@ export function DeviceFormDialog({
           {editing && (
             <TabsContent value="services" className="pt-2">
               <ServicesEditor deviceId={device!.id} />
+            </TabsContent>
+          )}
+
+          {editing && (
+            <TabsContent value="monitoring" className="pt-2">
+              <MonitorsEditor deviceId={device!.id} />
             </TabsContent>
           )}
         </Tabs>

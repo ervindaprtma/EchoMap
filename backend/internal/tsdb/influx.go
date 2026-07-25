@@ -45,6 +45,32 @@ func (w *Writer) WritePing(deviceID int64, ip, site string, alive bool, rttMs fl
 	w.write.WritePoint(p)
 }
 
+// WriteMonitor records one custom-monitor check to the `monitor_metrics`
+// measurement (Doc 2 §4.6). httpStatus/certDaysLeft are nil for TCP checks.
+func (w *Writer) WriteMonitor(monitorID, deviceID int64, kind string, up bool, durationMs float64, httpStatus, certDaysLeft *int) {
+	if w.write == nil {
+		return
+	}
+	upVal := 0
+	if up {
+		upVal = 1
+	}
+	p := influxdb2.NewPointWithMeasurement("monitor_metrics").
+		AddTag("monitor_id", strconv.FormatInt(monitorID, 10)).
+		AddTag("device_id", strconv.FormatInt(deviceID, 10)).
+		AddTag("kind", kind).
+		AddField("up", upVal).
+		AddField("duration_ms", durationMs)
+	if httpStatus != nil {
+		p.AddField("http_status", *httpStatus)
+	}
+	if certDaysLeft != nil {
+		p.AddField("cert_days_left", *certDaysLeft)
+	}
+	p.SetTime(time.Now())
+	w.write.WritePoint(p)
+}
+
 func (w *Writer) Close() {
 	if w.client != nil {
 		w.write.Flush()

@@ -128,7 +128,14 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/devices/{id}/services", s.gate(RoleAdmin, s.listServices))
 	mux.HandleFunc("POST /api/v1/devices/{id}/services", s.gate(RoleAdmin, s.createService))
 	mux.HandleFunc("DELETE /api/v1/services/{id}", s.gate(RoleAdmin, s.deleteService))
-	// TODO(phase9+): /devices/{id}/metrics, /test-ping, monitors, discovery.
+
+	// --- custom monitors (Phase 9): read = Operator, write/test = Admin (Doc 5 §8.4) ---
+	mux.HandleFunc("GET /api/v1/devices/{id}/monitors", s.gate(RoleOperator, s.listMonitors))
+	mux.HandleFunc("POST /api/v1/devices/{id}/monitors", s.gate(RoleAdmin, s.createMonitor))
+	mux.HandleFunc("PATCH /api/v1/monitors/{id}", s.gate(RoleAdmin, s.patchMonitor))
+	mux.HandleFunc("DELETE /api/v1/monitors/{id}", s.gate(RoleAdmin, s.deleteMonitor))
+	mux.HandleFunc("POST /api/v1/monitors/{id}/test", s.gate(RoleAdmin, s.testMonitor))
+	// TODO(phase10+): /devices/{id}/metrics/ping, /monitors/{id}/metrics, discovery.
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

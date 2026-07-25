@@ -21,12 +21,12 @@
 - **Browser sound & desktop pop-up alerts** — two toggles in the topbar (stored per browser, no server state): a synthesized chime (falling tones for DOWN, rising for recovery) and native desktop notifications, one per device. They fire on any page and stay **silent for devices down via a dependency parent** — only the device that actually failed interrupts you.
 - **Users, roles & sessions (Phase 8)** — Superadmin / Administrator / Operator, enforced **server-side on every route** (the UI just hides what a role can't use). argon2id passwords, opaque tokens stored SHA-256-hashed, **HttpOnly session cookies** (retires the dev bearer for browsers; the static token stays for automation), 12 h idle / 7 d absolute expiry, per-session revoke, login rate-limiting, a bootstrap Superadmin seeded from `APP_ADMIN_PASSWORD` with a forced first-login password change.
 - **Event logging (Phase 8)** — an Admin **Logs** page: searchable, filterable, paginated table over INFO / NOTICE / ALERT / ERROR / AUDIT levels (AUDIT rows Superadmin-only). Login/config/transition/alert events are recorded; the page refreshes on a short poll.
+- **Custom monitors (Phase 9)** — per-device **TCP / HTTP(S)** checks (with an absolute-URL override for endpoint health), each on its own interval (seconds/minutes/hours). A worker scheduler runs the same debounce as ping; a confirmed transition writes a log row, fires a Telegram alert + browser pop-up/sound, and pushes a `monitor.status` WS frame. Monitors pause while their device is DOWN, HTTPS records cert-expiry, and an on-demand **"Test now"** runs one check immediately. Configured in the device dialog's **Monitoring** tab (Admin+).
 
 ## Designed, pending implementation (see [PRD.md](./PRD.md) §5 roadmap)
 
-**v1.1 — next in line (Phases 9–11):**
+**v1.1 — next in line (Phases 10–11):**
 
-- **Custom monitors** — per-device TCP / HTTP(S) / URL health checks with custom intervals, their own alerts/pop-ups/logs — Phase 9.
 - **History charts** — latency / packet-loss / jitter and per-monitor graphs, with a TLS-expiry stat for HTTPS — Phase 10.
 - **Custom `.wav` alert sounds**, ad-hoc **Telnet** tool, **email** channel, single **"flapping"** alert — Phase 11.
 
@@ -64,8 +64,8 @@ The nine product requirements and where each stands (details per pillar in [PRD.
 | Event logging — searchable table, levels INFO / NOTICE / ALERT / ERROR / AUDIT | ✅ Done (Phase 8; live WS prepend deferred, page polls) |
 | User management + sessions + roles (Superadmin / Administrator / Operator) | ✅ Done (Phase 8; argon2id, cookie sessions, server-side RBAC) |
 | Telnet tool (ad-hoc, zero-credential handoff) | ⬜ Pending (Phase 11) |
-| Custom port / protocol / URL monitors (per-device, custom interval) | ⬜ Pending (Phase 9) |
-| Custom uploaded `.wav` alert sounds + URL health checks | ⬜ Pending (Phases 9/11) |
+| Custom port / protocol / URL monitors (per-device, custom interval) | ✅ Done (Phase 9; TCP/HTTP(S), scheduler, `monitor.status`, test endpoint) |
+| Custom uploaded `.wav` alert sounds + URL health checks | 🟡 URL health checks done (Phase 9, monitor `url_override`); `.wav` upload/assign pending (Phase 11) |
 | Historical graphs per device (latency / loss / jitter; monitor charts) | ⬜ Pending (Phase 10) |
 
 ---
@@ -164,7 +164,7 @@ No Node, no `npm install`, no `npm run build` on the host — each service build
 > ```
 > This host step is **not** the deployment model — it disappears once the frontend image exists; `npm run dev` then remains only as an optional HMR convenience for frontend development.
 
-The Postgres schema in `backend/migrations/` (`0001` + `0002` + `0003`) is applied automatically on the container's **first boot** (via the `docker-entrypoint-initdb.d` mount) — no manual migration step. There is no online migration runner yet, so applying a new migration to an **existing** database is a manual `psql -f` (an upgrade-hardening item). The API listens on `:8080`: `GET /healthz` and `POST /api/v1/auth/login` are open; everything else authenticates by the `echomap_session` cookie (browsers) or the static `APP_API_TOKEN` bearer (automation). On first boot, sign in as **`admin`** with `APP_ADMIN_PASSWORD` and set a new password when prompted.
+The Postgres schema in `backend/migrations/` (`0001` + `0002` + `0003` + `0004`) is applied automatically on the container's **first boot** (via the `docker-entrypoint-initdb.d` mount) — no manual migration step. There is no online migration runner yet, so applying a new migration to an **existing** database is a manual `psql -f` (an upgrade-hardening item). The API listens on `:8080`: `GET /healthz` and `POST /api/v1/auth/login` are open; everything else authenticates by the `echomap_session` cookie (browsers) or the static `APP_API_TOKEN` bearer (automation). On first boot, sign in as **`admin`** with `APP_ADMIN_PASSWORD` and set a new password when prompted.
 
 ## Repository layout
 

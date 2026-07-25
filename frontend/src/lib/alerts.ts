@@ -104,6 +104,42 @@ function showPopup(kind: AlertKind, ev: StatusFrame) {
   }
 }
 
+// MonitorFrame is the `monitor.status` WS frame (Doc 5 §8.7).
+export interface MonitorFrame {
+  monitor_id: number
+  device_id: number
+  label?: string
+  kind?: string
+  to_status: string
+  from_status?: string
+}
+
+// fireMonitorAlert mirrors fireAlert for custom monitors. Monitors have no
+// PARENT cascade, so the rule is simpler: DOWN sounds, and UP is announced only
+// as a recovery from DOWN (a first-sighting UNKNOWN→UP stays quiet).
+export function fireMonitorAlert(ev: MonitorFrame) {
+  let kind: AlertKind | null = null
+  if (ev.to_status === "DOWN") kind = "down"
+  else if (ev.to_status === "UP" && ev.from_status === "DOWN") kind = "up"
+  if (!kind) return
+  const prefs = loadPrefs()
+  if (prefs.sound) playChime(kind)
+  if (prefs.popup) showMonitorPopup(kind, ev)
+}
+
+function showMonitorPopup(kind: AlertKind, ev: MonitorFrame) {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return
+  const what = ev.label ?? `monitor ${ev.monitor_id}`
+  try {
+    new Notification(kind === "down" ? `Monitor DOWN: ${what}` : `Monitor recovered: ${what}`, {
+      body: `${ev.kind ?? ""} check ${kind === "down" ? "failed" : "is passing again"}`.trim(),
+      tag: `echomap-monitor-${ev.monitor_id}`, // one live pop-up per monitor
+    })
+  } catch {
+    /* Notification constructor throws on some mobile browsers — ignore. */
+  }
+}
+
 // requestPopupPermission is called from the toggle (a user gesture, which the
 // permission prompt requires). Returns whether pop-ups can actually be shown.
 export async function requestPopupPermission(): Promise<boolean> {

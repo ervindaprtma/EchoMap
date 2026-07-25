@@ -38,6 +38,21 @@ type UpdatedEvent struct {
 	Name      string `json:"name,omitempty"`
 }
 
+// MonitorStatusEvent is the `monitor.status` WS frame (Doc 5 §8.7): a custom
+// device monitor confirmed a UP/DOWN transition. Rides ChannelStatus like the
+// others so the API relay stays a single subscriber; clients switch on Type.
+type MonitorStatusEvent struct {
+	Type       string    `json:"type"`
+	MonitorID  int64     `json:"monitor_id"`
+	DeviceID   int64     `json:"device_id"`
+	Label      string    `json:"label"`
+	Kind       string    `json:"kind"`
+	FromStatus string    `json:"from_status"`
+	ToStatus   string    `json:"to_status"`
+	HTTPStatus *int      `json:"http_status,omitempty"`
+	ChangedAt  time.Time `json:"changed_at"`
+}
+
 type Bus struct {
 	rdb *redis.Client
 }
@@ -68,6 +83,15 @@ func (b *Bus) PublishStatus(ctx context.Context, ev StatusEvent) error {
 
 func (b *Bus) PublishUpdated(ctx context.Context, ev UpdatedEvent) error {
 	ev.Type = "device.updated"
+	data, err := json.Marshal(ev)
+	if err != nil {
+		return err
+	}
+	return b.rdb.Publish(ctx, ChannelStatus, data).Err()
+}
+
+func (b *Bus) PublishMonitorStatus(ctx context.Context, ev MonitorStatusEvent) error {
+	ev.Type = "monitor.status"
 	data, err := json.Marshal(ev)
 	if err != nil {
 		return err

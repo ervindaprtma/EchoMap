@@ -83,6 +83,39 @@ func (t *Telegram) StatusAlert(ctx context.Context, d monitor.Device, from, to s
 	}
 }
 
+// MonitorAlert delivers a custom-monitor transition (Doc 3 §9). It reuses the
+// device's alert rules and the same on_down/on_up gating, and logs ALERT/ERROR
+// to the event log per attempt. Message carries the monitor label + kind.
+func (t *Telegram) MonitorAlert(ctx context.Context, deviceID int64, label, kind, from, to string) {
+	cfg, err := t.store.TelegramConfigFor(ctx, deviceID)
+	if err != nil {
+		log.Printf("notify: load telegram config (monitor): %v", err)
+		return
+	}
+	if cfg.BotToken == "" || len(cfg.Rules) == 0 {
+		return
+	}
+	icon := "🟢"
+	if to == "DOWN" {
+		icon = "🔴"
+	}
+	text := fmt.Sprintf("%s monitor *%s* (%s) %s → %s", icon, label, kind, from, to)
+	for _, r := range cfg.Rules {
+		if (to == "DOWN" && !r.OnDown) || (to == "UP" && !r.OnUp) {
+			continue
+		}
+		err := t.send(ctx, cfg.BotToken, r.ChatID, text)
+		level, msg := "ALERT", fmt.Sprintf("monitor %s (%s) %s → %s", label, kind, from, to)
+		if err != nil {
+			level, msg = "ERROR", fmt.Sprintf("monitor alert send failed for %s: %v", label, err)
+			log.Printf("notify: telegram monitor send to %s failed: %v", r.ChatID, err)
+		}
+		id := deviceID
+		_ = t.store.InsertEventLog(ctx, level, "alert", msg, &id, nil,
+			map[string]any{"channel": "TELEGRAM", "delivered": err == nil, "monitor": label, "kind": kind})
+	}
+}
+
 func render(tmplSrc string, d monitor.Device, from, to string, affected []monitor.Child) string {
 	if tmplSrc == "" {
 		tmplSrc = defaultTemplate
