@@ -1,6 +1,7 @@
 import { useState } from "react"
+import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { Globe, Lock, Pencil, Search, TerminalSquare, Waypoints } from "lucide-react"
+import { Globe, LineChart, Lock, Pencil, Search, Terminal, TerminalSquare, Waypoints } from "lucide-react"
 import { api } from "@/lib/api"
 import { useRole } from "@/lib/auth"
 import {
@@ -49,6 +50,15 @@ export function NodeContextMenu({
     }
   }
 
+  // Ad-hoc Telnet (Pillar 12): same zero-credential handoff dialog as SSH, no
+  // configured service needed. Always port 23 — a custom port belongs on a
+  // configured TELNET service. Admin+ only (P11 matrix).
+  const telnet = () =>
+    setHandoff({
+      action: { kind: "handoff", proto: "telnet", host: device.ip_address, port: 23 },
+      label: "Telnet",
+    })
+
   const items = services.data?.items ?? []
 
   return (
@@ -59,6 +69,14 @@ export function NodeContextMenu({
           <ContextMenuLabel className="truncate">
             {device.name} <span className="font-mono text-xs text-muted-foreground">{device.ip_address}</span>
           </ContextMenuLabel>
+          <ContextMenuSeparator />
+
+          <ContextMenuItem asChild>
+            <Link to={`/devices/${device.id}/history`}>
+              <LineChart className="mr-2 h-4 w-4" />
+              History
+            </Link>
+          </ContextMenuItem>
           <ContextMenuSeparator />
 
           {isAdmin && (
@@ -103,6 +121,15 @@ export function NodeContextMenu({
                 <Search className="mr-2 h-4 w-4" />
                 DNS Lookup
               </ContextMenuItem>
+              {isAdmin && (
+                <>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem onSelect={telnet}>
+                    <Terminal className="mr-2 h-4 w-4" />
+                    Telnet
+                  </ContextMenuItem>
+                </>
+              )}
             </ContextMenuSubContent>
           </ContextMenuSub>
 

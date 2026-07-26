@@ -5,9 +5,11 @@ import { AccountMenu } from "@/components/AccountMenu"
 import { AuthProvider, useAuth, useRole } from "@/lib/auth"
 import Login from "@/pages/Login"
 import Devices from "@/pages/Devices"
+import { History } from "@/pages/History"
 import Topology from "@/pages/Topology"
 import Users from "@/pages/Users"
 import Logs from "@/pages/Logs"
+import Settings from "@/pages/Settings"
 import { useRealtime } from "@/lib/realtime"
 
 const navClass = ({ isActive }: { isActive: boolean }) =>
@@ -65,6 +67,7 @@ function Shell() {
               <NavLink to="/" end className={navClass}>Devices</NavLink>
               <NavLink to="/topology" className={navClass}>Topology</NavLink>
               {isAdmin && <NavLink to="/logs" className={navClass}>Logs</NavLink>}
+              {isAdmin && <NavLink to="/settings" className={navClass}>Settings</NavLink>}
               {isSuperadmin && <NavLink to="/users" className={navClass}>Users</NavLink>}
             </nav>
           </div>
@@ -89,9 +92,11 @@ function Shell() {
       <main className="container py-6">
         <Routes>
           <Route path="/" element={<Devices />} />
+          <Route path="/devices/:id/history" element={<History />} />
           <Route path="/topology" element={<Topology />} />
           <Route path="/topology/:mapId" element={<Topology />} />
           {isAdmin && <Route path="/logs" element={<Logs />} />}
+          {isAdmin && <Route path="/settings" element={<Settings />} />}
           {isSuperadmin && <Route path="/users" element={<Users />} />}
         </Routes>
       </main>

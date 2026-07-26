@@ -54,7 +54,7 @@ export function SshHandoffDialog({
             Open in {action.proto === "ssh" ? "SSH" : "Telnet"} app (PuTTY / OpenSSH)
           </Button>
 
-          {websshBase && (
+          {websshBase && action.proto === "ssh" && (
             <Button
               variant="secondary"
               className="w-full justify-start"

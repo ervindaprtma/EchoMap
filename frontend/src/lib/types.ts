@@ -114,3 +114,57 @@ export interface DeviceMonitor {
   created_at: string
   updated_at: string
 }
+
+// ---- History metrics reads (Doc 5 §8.5–8.6, Phase 10) ----
+export type HistoryRange = "1h" | "6h" | "24h" | "7d" | "30d"
+
+export interface PingPoint {
+  t: string
+  latency_avg: number | null
+  latency_p95: number | null
+  packet_loss: number | null
+  jitter: number | null
+  availability: number | null
+}
+export interface PingMetrics {
+  range: HistoryRange
+  points: PingPoint[]
+}
+
+export interface MonitorPoint {
+  t: string
+  duration_ms: number | null
+  availability: number | null
+}
+export interface StatusBandPoint {
+  t: string
+  c2xx: number
+  c3xx: number
+  c4xx: number
+  c5xx: number
+}
+export interface MonitorSeries {
+  kind: MonitorKind
+  points: MonitorPoint[]
+  status_band?: StatusBandPoint[]
+  cert_days_left?: number
+}
+export interface MonitorMetrics {
+  range: HistoryRange
+  series: MonitorSeries
+}
+
+// Alert rules (Doc 5 §8) — device_id null = a global rule for every device.
+export type AlertChannel = "TELEGRAM" | "EMAIL"
+export interface AlertRule {
+  id: number
+  device_id: number | null
+  device_name: string | null
+  channel: AlertChannel
+  target: string
+  on_down: boolean
+  on_up: boolean
+  on_flapping: boolean
+  on_orphaned: boolean
+  enabled: boolean
+}

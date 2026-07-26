@@ -16,19 +16,20 @@
 - **Topology canvas** — React Flow (v11) wrapped in shadcn/ui: View/Edit modes, drag + explicit "Save Layout" (saved coordinates are canonical), handle-drag **manual links** (never auto-deleted), submap folder nodes, per-map breadcrumb.
 - **Multi-site / submap tree** — nested maps (Site → Building → Rack); each submap node is colored by its **worst descendant status**, aggregated over the whole subtree, so a branch problem is visible from the root map.
 - **Custom icons** — upload SVG/PNG to the icon library API and assign per device (picker in the edit dialog). *draw.io `.xml` library import + the Icon Library management page are pending.*
-- **Right-click services & tools** — configure per-device services (HTTP / HTTPS / custom port / SSH / Telnet / custom URL); right-click a node to launch them (URLs open a new tab; SSH hands off to `ssh://` handlers like PuTTY, an optional web-SSH gateway, or copy-command). Built-in on-demand **ping, traceroute, DNS lookup**. **Credentials are never stored.**
+- **Right-click services & tools** — configure per-device services (HTTP / HTTPS / custom port / SSH / Telnet / custom URL); right-click a node to launch them (URLs open a new tab; SSH hands off to `ssh://` handlers like PuTTY, an optional web-SSH gateway, or copy-command). Built-in on-demand **ping, traceroute, DNS lookup**, plus an ad-hoc **Telnet** handoff (Admin+). **Credentials are never stored.**
 - **Telegram alerting with custom templates** — operator-editable Go templates with parse validation; the bot token is **AES-256-GCM encrypted at rest** and only ever returned masked.
 - **Browser sound & desktop pop-up alerts** — two toggles in the topbar (stored per browser, no server state): a synthesized chime (falling tones for DOWN, rising for recovery) and native desktop notifications, one per device. They fire on any page and stay **silent for devices down via a dependency parent** — only the device that actually failed interrupts you.
 - **Users, roles & sessions (Phase 8)** — Superadmin / Administrator / Operator, enforced **server-side on every route** (the UI just hides what a role can't use). argon2id passwords, opaque tokens stored SHA-256-hashed, **HttpOnly session cookies** (retires the dev bearer for browsers; the static token stays for automation), 12 h idle / 7 d absolute expiry, per-session revoke, login rate-limiting, a bootstrap Superadmin seeded from `APP_ADMIN_PASSWORD` with a forced first-login password change.
 - **Event logging (Phase 8)** — an Admin **Logs** page: searchable, filterable, paginated table over INFO / NOTICE / ALERT / ERROR / AUDIT levels (AUDIT rows Superadmin-only). Login/config/transition/alert events are recorded; the page refreshes on a short poll.
 - **Custom monitors (Phase 9)** — per-device **TCP / HTTP(S)** checks (with an absolute-URL override for endpoint health), each on its own interval (seconds/minutes/hours). A worker scheduler runs the same debounce as ping; a confirmed transition writes a log row, fires a Telegram alert + browser pop-up/sound, and pushes a `monitor.status` WS frame. Monitors pause while their device is DOWN, HTTPS records cert-expiry, and an on-demand **"Test now"** runs one check immediately. Configured in the device dialog's **Monitoring** tab (Admin+).
+- **Alert configuration from the UI (Phase 11)** — an Admin **Settings → Alerts** page: create/toggle/delete **alert rules** (per-device or global; per-event switches for down / up / flapping / orphaned) and set delivery-channel credentials (Telegram bot token, web-SSH gateway URL). Previously alert rules could only be created via SQL. *(Email delivery is a later Phase 11 item; TELEGRAM sends today.)*
+- **History charts (Phase 10)** — a **History** action (Devices row · node context menu) opens `/devices/:id/history`: a range picker (1h/6h/24h/7d/30d) over a ping group (latency avg+p95, packet loss, read-time RFC 3550 jitter, availability strip) plus one group per custom monitor (connect/response time, HTTP status-code band, availability, TLS days-to-expiry for HTTPS). Read-only Recharts; degrades to a clean "no samples" state when InfluxDB isn't configured.
 
 ## Designed, pending implementation (see [PRD.md](./PRD.md) §5 roadmap)
 
-**v1.1 — next in line (Phases 10–11):**
+**v1.1 — next in line (Phase 11):**
 
-- **History charts** — latency / packet-loss / jitter and per-monitor graphs, with a TLS-expiry stat for HTTPS — Phase 10.
-- **Custom `.wav` alert sounds**, ad-hoc **Telnet** tool, **email** channel, single **"flapping"** alert — Phase 11.
+- **Custom `.wav` alert sounds**, **email** channel, single **"flapping"** alert — Phase 11 (in progress; the ad-hoc **Telnet** tool and the **alert-rules CRUD + Settings→Alerts tab** already shipped); then the **housekeeping retention sweep** (Phase 11.5, priority — nothing prunes the log/session tables yet).
 
 **Original roadmap (Slices 3–7):**
 
@@ -51,7 +52,7 @@ The nine product requirements and where each stands (details per pillar in [PRD.
 | 2 | Web-based "The Dude" alternative | ✅ Core done |
 | 3 | Custom icons, draw.io-compatible | 🟡 Upload/assign done; `.xml` import + library page pending |
 | 4 | Tools (SSH/traceroute/DNS), domain devices, manual links | ✅ Done (incl. periodic DNS re-resolution) |
-| 5 | Telegram alerts + templates + sound/pop-up | 🟡 Telegram, templates, sound/pop-up done; email + flapping alert pending |
+| 5 | Telegram alerts + templates + sound/pop-up | 🟡 Telegram, templates, sound/pop-up + **alert-rules config UI (Phase 11)** done; email + flapping alert pending |
 | 6 | Multi-site / submap tree | ✅ Done |
 | 7 | Parent/child cascade (red down, green recover) | ✅ Done |
 | 8 | Device services, zero-credential launch | ✅ Done |
@@ -63,10 +64,10 @@ The nine product requirements and where each stands (details per pillar in [PRD.
 |-------------|--------|
 | Event logging — searchable table, levels INFO / NOTICE / ALERT / ERROR / AUDIT | ✅ Done (Phase 8; live WS prepend deferred, page polls) |
 | User management + sessions + roles (Superadmin / Administrator / Operator) | ✅ Done (Phase 8; argon2id, cookie sessions, server-side RBAC) |
-| Telnet tool (ad-hoc, zero-credential handoff) | ⬜ Pending (Phase 11) |
+| Telnet tool (ad-hoc, zero-credential handoff) | ✅ Done (Phase 11) |
 | Custom port / protocol / URL monitors (per-device, custom interval) | ✅ Done (Phase 9; TCP/HTTP(S), scheduler, `monitor.status`, test endpoint) |
 | Custom uploaded `.wav` alert sounds + URL health checks | 🟡 URL health checks done (Phase 9, monitor `url_override`); `.wav` upload/assign pending (Phase 11) |
-| Historical graphs per device (latency / loss / jitter; monitor charts) | ⬜ Pending (Phase 10) |
+| Historical graphs per device (latency / loss / jitter; monitor charts) | ✅ Done (Phase 10; metrics read APIs + `/devices/:id/history` Recharts page, live-tested) |
 
 ---
 
@@ -80,6 +81,7 @@ The nine product requirements and where each stands (details per pillar in [PRD.
 | 3 | [Backend Logic & Pseudocode](./03-backend-logic.md) | Go snippets: skip-on-fail discovery, state-change + flapping alerting, parent/child cascade, hostname resolver, alert templates, Netbox ORPHANED diffing, retention sweeps |
 | 4 | [Frontend UI/UX (shadcn/ui)](./04-frontend-uiux.md) | Pages/components, React Flow topology canvas, Edit/View modes, right-click services/tools menu, submap navigation, icon library, IP calculator & designer, orphan resolution |
 | 5 | [API Endpoints & WebSocket Events](./05-api-websocket.md) | Authentication, REST endpoints (ingestion, topology & maps, services, tools, icons, designs, settings) and WS event payloads |
+| 6 | [Menu Design Gallery & Stack Verification](./06-menu-design-gallery.md) | ASCII design mockups of every menu (with build status) + a stack cross-check matrix verifying doc claims against package.json / go.mod / compose |
 
 ---
 
@@ -107,7 +109,7 @@ EchoMap is a **worker-oriented monolith-of-services**: one Go binary that boots 
 
 - **Backend:** Go (goroutines for concurrent ping/SNMP). A Python (FastAPI + Celery) mapping is documented per section.
 - **Frontend:** React + Vite, `shadcn/ui` (Radix + Tailwind), React Flow (topology), Recharts (metrics), TanStack Query, native WebSocket.
-- **Data:** PostgreSQL (source of truth), Redis (asynq queue + Pub/Sub + cache), InfluxDB 2.x (time-series; Prometheus is a documented alternative).
+- **Data:** PostgreSQL (source of truth), Redis (Pub/Sub + cache; the Asynq queue arrives with Slice 3), InfluxDB 2.x (time-series; Prometheus is a documented alternative).
 - **Deploy:** single `docker-compose.yml`; ping containers get `cap_add: NET_RAW` for unprivileged ICMP; stores are health-gated via `depends_on: condition: service_healthy`.
 
 ---
@@ -177,8 +179,8 @@ EchoMap/
 │   ├── internal/api/         #   REST + WS hub: devices, topology, maps, icons, services, tools, settings
 │   ├── internal/monitor/     #   debounce/flap state machine + parent/child cascade (+ tests)
 │   ├── internal/worker/      #   ping loop (discovery/snmp/sync attach in Slices 3-6)
-│   ├── internal/{store,bus,ping,tools,notify,secrets,tsdb,config,db}/
-│   ├── migrations/           #   0001_init.sql + 0002_add_monitoring_features.sql (Doc 2 schema)
+│   ├── internal/{auth,moncheck,store,bus,ping,tools,notify,secrets,tsdb,config,db}/
+│   ├── migrations/           #   0001..0004 (Doc 2 schema: core, monitoring, users/logs, monitors/sounds)
 │   ├── prisma/schema.prisma  #   read-only mirror of the SQL schema for Prisma tooling
 │   └── Dockerfile            #   multi-stage; setcap NET_RAW on a non-root binary
 ├── frontend/                 # React + Vite + TS + Tailwind + shadcn/ui

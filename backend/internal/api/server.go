@@ -12,6 +12,7 @@ import (
 	"echomap/internal/bus"
 	"echomap/internal/config"
 	"echomap/internal/store"
+	"echomap/internal/tsdb"
 )
 
 type server struct {
@@ -19,12 +20,15 @@ type server struct {
 	store   *store.Store
 	hub     *hub
 	limiter *loginLimiter
+	reader  *tsdb.Reader
 }
 
 // Run starts the HTTP server and blocks until ctx is cancelled, then drains.
 // b may be nil (Redis unavailable) — the /ws endpoint still serves but gets no events.
 func Run(ctx context.Context, cfg config.Config, st *store.Store, b *bus.Bus) error {
-	s := &server{cfg: cfg, store: st, hub: newHub(), limiter: newLoginLimiter()}
+	reader := tsdb.NewReader(cfg.InfluxURL, cfg.InfluxToken, cfg.InfluxOrg, cfg.InfluxBucket)
+	defer reader.Close()
+	s := &server{cfg: cfg, store: st, hub: newHub(), limiter: newLoginLimiter(), reader: reader}
 
 	// Phase 8: seed the bootstrap Superadmin from APP_ADMIN_PASSWORD on an empty DB.
 	if err := s.bootstrapSuperadmin(ctx); err != nil {
@@ -105,6 +109,12 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/settings/channels", s.gate(RoleAdmin, s.getChannelSettings))
 	mux.HandleFunc("PUT /api/v1/settings/channels", s.gate(RoleAdmin, s.putChannelSettings))
 
+	// --- alert rules (Phase 11): read = Operator, write = Admin (Doc 5 §8) ---
+	mux.HandleFunc("GET /api/v1/alert-rules", s.gate(RoleOperator, s.listAlertRules))
+	mux.HandleFunc("POST /api/v1/alert-rules", s.gate(RoleAdmin, s.createAlertRule))
+	mux.HandleFunc("PATCH /api/v1/alert-rules/{id}", s.gate(RoleAdmin, s.patchAlertRule))
+	mux.HandleFunc("DELETE /api/v1/alert-rules/{id}", s.gate(RoleAdmin, s.deleteAlertRule))
+
 	// --- maps & topology (read = Operator, write = Admin) ---
 	mux.HandleFunc("GET /api/v1/maps", s.gate(RoleOperator, s.listMaps))
 	mux.HandleFunc("POST /api/v1/maps", s.gate(RoleAdmin, s.createMap))
@@ -135,7 +145,11 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/v1/monitors/{id}", s.gate(RoleAdmin, s.patchMonitor))
 	mux.HandleFunc("DELETE /api/v1/monitors/{id}", s.gate(RoleAdmin, s.deleteMonitor))
 	mux.HandleFunc("POST /api/v1/monitors/{id}/test", s.gate(RoleAdmin, s.testMonitor))
-	// TODO(phase10+): /devices/{id}/metrics/ping, /monitors/{id}/metrics, discovery.
+
+	// History metrics reads (Phase 10, §8.5–8.6) — read-only, Operator+.
+	mux.HandleFunc("GET /api/v1/devices/{id}/metrics/ping", s.gate(RoleOperator, s.metricsPing))
+	mux.HandleFunc("GET /api/v1/monitors/{id}/metrics", s.gate(RoleOperator, s.metricsMonitor))
+	// TODO(phase11+): discovery ingestion, alert-sounds.
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

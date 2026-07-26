@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { Link } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { api } from "@/lib/api"
 import { useRole } from "@/lib/auth"
@@ -112,6 +113,9 @@ export default function Devices() {
                   {d.last_seen_at ? new Date(d.last_seen_at).toLocaleString() : "never"}
                 </td>
                 <td className="px-3 py-2 text-right text-xs">
+                  <Link to={`/devices/${d.id}/history`} className="mr-3 text-muted-foreground hover:text-foreground">
+                    History
+                  </Link>
                   {isAdmin ? (
                     <>
                       <button onClick={() => openEdit(d)} className="mr-3 text-muted-foreground hover:text-foreground">
@@ -129,9 +133,7 @@ export default function Devices() {
                         Delete
                       </button>
                     </>
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
-                  )}
+                  ) : null}
                 </td>
               </tr>
             ))}
