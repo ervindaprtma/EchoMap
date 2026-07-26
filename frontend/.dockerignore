@@ -1,0 +1,11 @@
+# Never ship host build artifacts into the image build context — npm ci rebuilds
+# node_modules inside the image, and the build stage regenerates dist.
+node_modules
+dist
+.vite
+*.tsbuildinfo
+.git
+.env
+.env.*
+Dockerfile
+.dockerignore

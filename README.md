@@ -142,7 +142,7 @@ EchoMap runs as one `docker-compose` stack of five processes: the Go binary in t
 - **OS:** any modern Linux (kernel ≥ 5.x) with **Docker Engine 24+** and **Compose v2**. Also runs on macOS/Windows via Docker Desktop and on WSL2 (the dev/test environment) for evaluation.
 - **CPU architecture:** **x86-64 or arm64** — all base images (postgres/redis/influxdb) are multi-arch and the Go binary cross-compiles, so small ARM VMs work for lab tiers.
 - **Raw sockets:** the host must allow the `NET_RAW` capability on containers (standard Docker; some locked-down managed-container platforms forbid it). Alternative on such hosts: the `net.ipv4.ping_group_range` sysctl for unprivileged ICMP without `NET_RAW` (Doc 1 §5).
-- **Network:** L3 reachability from the host to everything it monitors (ICMP echo, plus TCP/HTTP for v1.1 monitors); outbound HTTPS to `api.telegram.org` for alerts; inbound `:80` served by the frontend container (which reverse-proxies `/api` + `/ws` to the `app` role) — plus `:8080` if you expose the API directly. In the interim host-dev setup the frontend is on `:5173`.
+- **Network:** L3 reachability from the host to everything it monitors (ICMP echo, plus TCP/HTTP for v1.1 monitors); outbound HTTPS to `api.telegram.org` for alerts; inbound `:80` served by the frontend container (which reverse-proxies `/api` + `/ws` to the `app` role) — plus `:8080` if you expose the API directly. (Optional host HMR dev runs Vite on `:5173`.)
 
 **Not covered by these numbers:** high availability (this is a single-host deployment — no clustering/failover), and the Node.js toolchain, which is a **build-time** dependency for the frontend only, not part of the runtime footprint.
 
@@ -150,21 +150,14 @@ EchoMap runs as one `docker-compose` stack of five processes: the Go binary in t
 
 ## Quickstart
 
-**Target model (see [PRD.md](./PRD.md) §3b):** the whole stack — frontend included — comes up with one command and no host build:
+**All-container (see [PRD.md](./PRD.md) §3b):** the whole stack — frontend included — comes up with one command and no host build:
 
 ```bash
-cp .env.example .env                  # fill in the secrets
+cp .env.example .env                  # fill in the secrets (INFLUX_TOKEN, APP_ENCRYPTION_KEY, APP_API_TOKEN, APP_ADMIN_PASSWORD)
 docker compose up -d --build          # builds every image (incl. the frontend) and starts everything
 ```
 
-No Node, no `npm install`, no `npm run build` on the host — each service builds inside its own image.
-
-> ⬜ **Interim gap:** the **frontend container is not built yet** (no `frontend/Dockerfile` / compose service — deployment-hardening item in PRD §5). Until it lands, `docker compose up -d --build` brings up the **backend + stores only**, and you run the frontend with Vite on the host as a temporary step:
-> ```bash
-> cd frontend && npm install && npm run dev   # http://localhost:5173, proxies /api and /ws to :8080
-> # then sign in as admin / APP_ADMIN_PASSWORD (Phase 8 cookie login; VITE_API_TOKEN is no longer used by the browser)
-> ```
-> This host step is **not** the deployment model — it disappears once the frontend image exists; `npm run dev` then remains only as an optional HMR convenience for frontend development.
+No Node, no `npm install`, no `npm run build` on the host — each service builds inside its own image. Open **http://localhost/** (nginx serves the SPA on `:80` and reverse-proxies `/api` + `/ws` to the `app` role, so it's single-origin). The API is also directly reachable on `:8080` if you want it.
 
 The Postgres schema in `backend/migrations/` (`0001` + `0002` + `0003` + `0004`) is applied automatically on the container's **first boot** (via the `docker-entrypoint-initdb.d` mount) — no manual migration step. There is no online migration runner yet, so applying a new migration to an **existing** database is a manual `psql -f` (an upgrade-hardening item). The API listens on `:8080`: `GET /healthz` and `POST /api/v1/auth/login` are open; everything else authenticates by the `echomap_session` cookie (browsers) or the static `APP_API_TOKEN` bearer (automation). On first boot, sign in as **`admin`** with `APP_ADMIN_PASSWORD` and set a new password when prompted.
 
@@ -172,7 +165,7 @@ The Postgres schema in `backend/migrations/` (`0001` + `0002` + `0003` + `0004`)
 
 ```
 EchoMap/
-├── docker-compose.yml        # frontend + app + worker + postgres + redis + influxdb (all healthchecked; frontend service ⬜ pending)
+├── docker-compose.yml        # frontend + app + worker + postgres + redis + influxdb (all healthchecked)
 ├── .env.example              # secrets + tunables (copy to .env)
 ├── backend/                  # Go — single binary, role-dispatched (api | worker)
 │   ├── cmd/echomap/          #   main: --role / APP_ROLE dispatch; fatal without APP_ENCRYPTION_KEY
@@ -185,8 +178,8 @@ EchoMap/
 │   └── Dockerfile            #   multi-stage; setcap NET_RAW on a non-root binary
 ├── frontend/                 # React + Vite + TS + Tailwind + shadcn/ui
 │   ├── src/                  #   pages/{Devices,Topology}, components/{devices,topology,ui}, lib (+ vitest)
-│   ├── Dockerfile            #   ⬜ pending: multi-stage node build → nginx (serves bundle, proxies /api,/ws)
-│   └── nginx.conf            #   ⬜ pending: static serve + reverse proxy to the app service
+│   ├── Dockerfile            #   multi-stage node build → nginx (serves bundle, proxies /api,/ws)
+│   └── nginx.conf            #   static serve + reverse proxy to the app service
 ├── PRD.md                    # product source of truth (status, roadmap, UI/UX rules)
 └── 01..05-*.md               # the design blueprint (see status banners inside)
 ```

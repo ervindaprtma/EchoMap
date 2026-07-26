@@ -14,13 +14,19 @@ services:
       INFLUX_ORG: echomap
       INFLUX_BUCKET: ping_metrics
     ports:
-      - "8080:8080"       # REST + WS
+      - "8080:8080"       # REST + WS (optional direct access; the frontend proxies these too)
     cap_add:
       - NET_RAW           # on-demand single-shot pings (test reachability)
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
       influxdb: { condition: service_healthy }
+    healthcheck:
+      # busybox wget ships in the alpine runtime image; gates the frontend's start.
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   # ---- Workers: ping / snmp / discovery / netbox-sync / notifier ----
@@ -42,6 +48,16 @@ services:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
       influxdb: { condition: service_healthy }
+    restart: unless-stopped
+
+  # ---- Frontend: nginx serving the built SPA + reverse-proxying /api and /ws to app ----
+  frontend:
+    build: ./frontend
+    image: echomap-frontend:latest
+    ports:
+      - "80:80"           # the app's single public entrypoint
+    depends_on:
+      app: { condition: service_healthy }
     restart: unless-stopped
 
   # ---- Relational store (schema auto-applied from ./backend/migrations on first boot) ----

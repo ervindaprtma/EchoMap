@@ -1,0 +1,10 @@
+# Host build artifacts — the image builds the binary from source itself.
+bin/
+echomap
+*.exe
+*.test
+.git
+.env
+.env.*
+Dockerfile
+.dockerignore
