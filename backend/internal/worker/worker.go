@@ -61,6 +61,10 @@ func Run(ctx context.Context, cfg config.Config, st *store.Store, b *bus.Bus, tw
 	// snmp_enabled devices lacking sys_descr; no-ops until a community is set.
 	go runSNMPScanner(ctx, st, cfg.DiscoveryConcurrency)
 
+	// Netbox sync (Slice 6, Doc 3 §3) — hourly diff; IPs gone from Netbox become
+	// ORPHANED (never hard-deleted). No-ops until Netbox is configured + enabled.
+	go runNetboxSync(ctx, st, b)
+
 	log.Printf("worker started (ping interval %s, concurrency %d, dns recheck %s)",
 		interval, cfg.DiscoveryConcurrency, dnsEvery)
 

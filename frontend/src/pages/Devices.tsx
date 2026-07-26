@@ -43,6 +43,21 @@ export default function Devices() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["devices"] }),
   })
 
+  // Slice 6: orphan resolution (2-step). Detach keeps monitoring (NETBOX→MANUAL);
+  // confirm-delete is the only path that hard-deletes an ORPHANED device.
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["devices"] })
+    qc.invalidateQueries({ queryKey: ["topology"] })
+  }
+  const detach = useMutation({
+    mutationFn: (id: number) => api(`/api/v1/devices/${id}/detach-netbox`, { method: "POST" }),
+    onSuccess: invalidate,
+  })
+  const confirmDelete = useMutation({
+    mutationFn: (id: number) => api(`/api/v1/devices/${id}/confirm-delete`, { method: "POST" }),
+    onSuccess: invalidate,
+  })
+
   const openCreate = () => { setEditing(null); setFormOpen(true) }
   const openEdit = (d: Device) => { setEditing(d); setFormOpen(true) }
 
@@ -116,7 +131,28 @@ export default function Devices() {
                   <Link to={`/devices/${d.id}/history`} className="mr-3 text-muted-foreground hover:text-foreground">
                     History
                   </Link>
-                  {isAdmin ? (
+                  {isAdmin && d.status === "ORPHANED" ? (
+                    // Gone from Netbox — resolve it (Doc 3 §3): keep or hard-delete.
+                    <>
+                      <button
+                        onClick={() => detach.mutate(d.id)}
+                        className="mr-3 text-muted-foreground hover:text-foreground"
+                        title="Keep monitoring — convert to a manual device"
+                      >
+                        Detach
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (window.confirm(`Permanently delete orphaned ${d.name} (${d.ip_address})? This removes the device, its links and services. Detach instead to keep monitoring it.`)) {
+                            confirmDelete.mutate(d.id)
+                          }
+                        }}
+                        className="text-muted-foreground hover:text-red-500"
+                      >
+                        Confirm delete
+                      </button>
+                    </>
+                  ) : isAdmin ? (
                     <>
                       <button onClick={() => openEdit(d)} className="mr-3 text-muted-foreground hover:text-foreground">
                         Edit

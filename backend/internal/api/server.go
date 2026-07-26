@@ -132,6 +132,14 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/settings/channels/test-email", s.gate(RoleAdmin, s.testEmail))
 	mux.HandleFunc("GET /api/v1/settings/snmp", s.gate(RoleAdmin, s.getSNMPSettings))
 	mux.HandleFunc("PUT /api/v1/settings/snmp", s.gate(RoleAdmin, s.putSNMPSettings))
+	// Slice 6: Netbox sync settings + orphan resolution + sync logs.
+	mux.HandleFunc("GET /api/v1/settings/netbox", s.gate(RoleAdmin, s.getNetboxSettings))
+	mux.HandleFunc("PUT /api/v1/settings/netbox", s.gate(RoleAdmin, s.putNetboxSettings))
+	mux.HandleFunc("POST /api/v1/settings/netbox/test", s.gate(RoleAdmin, s.testNetbox))
+	mux.HandleFunc("POST /api/v1/settings/netbox/sync", s.gate(RoleAdmin, s.syncNetboxNow))
+	mux.HandleFunc("GET /api/v1/sync-logs", s.gate(RoleAdmin, s.listSyncLogs))
+	mux.HandleFunc("POST /api/v1/devices/{id}/detach-netbox", s.gate(RoleAdmin, s.detachNetbox))
+	mux.HandleFunc("POST /api/v1/devices/{id}/confirm-delete", s.gate(RoleAdmin, s.confirmDeleteOrphan))
 
 	// --- alert sounds (Phase 11, Pillar 14): read/playback = Operator, manage = Admin ---
 	mux.HandleFunc("GET /api/v1/sounds", s.gate(RoleOperator, s.listSounds))

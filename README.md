@@ -26,6 +26,7 @@
 - **History charts (Phase 10)** — a **History** action (Devices row · node context menu) opens `/devices/:id/history`: a range picker (1h/6h/24h/7d/30d) over a ping group (latency avg+p95, packet loss, read-time RFC 3550 jitter, availability strip) plus one group per custom monitor (connect/response time, HTTP status-code band, availability, TLS days-to-expiry for HTTPS). Read-only Recharts; degrades to a clean "no samples" state when InfluxDB isn't configured.
 - **Bulk subnet discovery (Slice 3)** — the Add-Device dialog's **Subnet Scan** tab sweeps a CIDR (e.g. `10.10.20.0/24`): every host is pinged once, dead IPs are **skipped immediately**, and live ones are added as UP devices under a subnet (so they inherit its site), with a live progress bar (`added` / `skipped` / current IP). Runs as a bounded in-process sweep in the `api` (no extra queue), Admin+. *Netbox import is still pending — Slice 6.*
 - **SNMP fingerprinting (Slice 4)** — set a read community in **Settings → SNMP** (encrypted at rest) and flip a device's **Enable SNMP** switch: a worker scanner reads its `sysDescr`/`sysObjectID`/`sysName` and interface table over SNMP v2c, classifies **vendor / model / icon**, discovers **interfaces**, and renames an IP-named device to its `sysName`. A **"Fingerprint now"** button runs it on demand. No device credentials are stored — the community lives once in settings. *(SNMPv3 is a future item.)*
+- **Netbox sync + ORPHANED safety (Slice 6)** — point EchoMap at your Netbox in **Settings → Netbox** (URL + token, encrypted; **Test** + **Sync now** buttons): every hour it imports all Netbox IPs and refreshes them. The rule that matters — an IP **removed** from Netbox is **never hard-deleted**; it's flagged **ORPHANED** and kept, waiting for a human. Resolve each orphan from the Devices page: **Detach** (keep monitoring, convert to a manual device) or **Confirm delete** (the only path that removes it). Recent sync runs are shown in the Netbox tab. *(Selective checkbox-import is deferred — the auto-sync imports the whole Netbox.)*
 
 ## Designed, pending implementation (see [PRD.md](./PRD.md) §5 roadmap)
 
@@ -37,8 +38,7 @@
 
 **Original roadmap (Slices 3–7):**
 
-- **Bulk discovery — Netbox import** (subnet CIDR sweep is ✅ done; Netbox preview/import + ORPHANED still pending) — Slice 6.
-- **Netbox hourly sync + ORPHANED safety flow** (never hard-delete; two-step, type-to-confirm resolution UI) — Slice 6.
+- **Netbox *selective* import** (checkbox preview/import tab in Add-Device) — the hourly Netbox sync + ORPHANED safety flow is ✅ done (Slice 6); only the pick-and-choose import UI remains.
 - **Alerting** — ✅ complete as of Phase 11 (Telegram + email/SMTP + templates + sound/pop-up + edge-triggered flapping alert).
 - **Engineer utilities** — IP calculator and the standalone drawing-only **Topology Designer** (the `designs` table/API groundwork exists).
 - **Dashboard & metrics UI**, auth/login (dev bearer token today), retention sweeps, dagre auto-arrange, maps management UI (rename/delete).

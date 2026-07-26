@@ -31,6 +31,7 @@ export default function Settings() {
         <TabsList>
           <TabsTrigger value="alerts">Alerts</TabsTrigger>
           <TabsTrigger value="snmp">SNMP</TabsTrigger>
+          <TabsTrigger value="netbox">Netbox</TabsTrigger>
         </TabsList>
         <TabsContent value="alerts" className="space-y-6">
           <ChannelsCard />
@@ -39,6 +40,9 @@ export default function Settings() {
         </TabsContent>
         <TabsContent value="snmp" className="space-y-6">
           <SnmpCard />
+        </TabsContent>
+        <TabsContent value="netbox" className="space-y-6">
+          <NetboxCard />
         </TabsContent>
       </Tabs>
     </div>
@@ -108,6 +112,135 @@ function SnmpCard() {
         <Button disabled={save.isPending} onClick={() => save.mutate()}>
           {save.isPending ? "Saving…" : "Save SNMP settings"}
         </Button>
+      </CardContent>
+    </Card>
+  )
+}
+
+// Netbox sync (Slice 6). URL + token (write-only, encrypted) + a sync toggle, a
+// connection test, and the recent sync-log runs. The hourly worker imports every
+// Netbox IP and marks IPs that vanish from Netbox as ORPHANED (never deleted).
+interface SyncLog {
+  id: number
+  run_at: string
+  status: string
+  ips_added: number
+  ips_updated: number
+  ips_orphaned: number
+  ips_restored: number
+  error: string | null
+}
+function NetboxCard() {
+  const qc = useQueryClient()
+  const { data } = useQuery({
+    queryKey: ["settings", "netbox"],
+    queryFn: () => api<{ url: string; token: string; sync_enabled: boolean }>("/api/v1/settings/netbox"),
+  })
+  const logs = useQuery({
+    queryKey: ["sync-logs"],
+    queryFn: () => api<{ items: SyncLog[] }>("/api/v1/sync-logs"),
+  })
+  const [url, setUrl] = useState<string | null>(null)
+  const [token, setToken] = useState<string | null>(null)
+  const [enabled, setEnabled] = useState<boolean | null>(null)
+  const [testMsg, setTestMsg] = useState("")
+
+  const save = useMutation({
+    mutationFn: () =>
+      api("/api/v1/settings/netbox", {
+        method: "PUT",
+        body: JSON.stringify({
+          url: url ?? data?.url ?? "",
+          sync_enabled: enabled ?? data?.sync_enabled ?? true,
+          ...(token === null ? {} : { token }),
+        }),
+      }),
+    onSuccess: () => {
+      setToken(null)
+      qc.invalidateQueries({ queryKey: ["settings", "netbox"] })
+    },
+  })
+  const test = useMutation({
+    mutationFn: () => api<{ ok: boolean; message: string }>("/api/v1/settings/netbox/test", { method: "POST" }),
+    onSuccess: (r) => setTestMsg((r.ok ? "✓ " : "✗ ") + r.message),
+  })
+  const syncNow = useMutation({
+    mutationFn: () => api<SyncLog>("/api/v1/settings/netbox/sync", { method: "POST" }),
+    onSuccess: (r) => {
+      setTestMsg(`synced: +${r.ips_added} added, ${r.ips_orphaned} orphaned, ${r.ips_restored} restored`)
+      qc.invalidateQueries({ queryKey: ["sync-logs"] })
+      qc.invalidateQueries({ queryKey: ["devices"] })
+    },
+    onError: (e) => setTestMsg((e as Error).message),
+  })
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Netbox</CardTitle>
+        <CardDescription>
+          Sync devices from Netbox hourly. An IP that disappears from Netbox is marked <b>ORPHANED</b> (kept, never
+          auto-deleted) — resolve it from the Devices page (Detach or Confirm delete).
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid max-w-lg gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="nb-url">Netbox URL</Label>
+            <Input id="nb-url" value={url ?? data?.url ?? ""} onChange={(e) => setUrl(e.target.value)} placeholder="https://netbox.example.com" />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="nb-token">API token</Label>
+            <Input id="nb-token" type="password" value={token ?? data?.token ?? ""} onChange={(e) => setToken(e.target.value)} placeholder="••••••••" />
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Switch id="nb-enabled" checked={enabled ?? data?.sync_enabled ?? true} onCheckedChange={setEnabled} />
+          <Label htmlFor="nb-enabled">Hourly sync enabled</Label>
+        </div>
+        {save.isError && <p className="text-sm text-red-500">{(save.error as Error).message}</p>}
+        <div className="flex items-center gap-3">
+          <Button disabled={save.isPending} onClick={() => save.mutate()}>
+            {save.isPending ? "Saving…" : "Save"}
+          </Button>
+          <Button variant="outline" disabled={test.isPending} onClick={() => test.mutate()}>
+            {test.isPending ? "Testing…" : "Test connection"}
+          </Button>
+          <Button variant="outline" disabled={syncNow.isPending} onClick={() => syncNow.mutate()}>
+            {syncNow.isPending ? "Syncing…" : "Sync now"}
+          </Button>
+          {testMsg && <span className="text-sm text-muted-foreground">{testMsg}</span>}
+        </div>
+
+        {(logs.data?.items.length ?? 0) > 0 && (
+          <div className="pt-2">
+            <div className="mb-1 text-sm font-medium">Recent syncs</div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>When</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Added</TableHead>
+                  <TableHead className="text-right">Updated</TableHead>
+                  <TableHead className="text-right">Orphaned</TableHead>
+                  <TableHead className="text-right">Restored</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {logs.data!.items.map((l) => (
+                  <TableRow key={l.id}>
+                    <TableCell className="text-xs">{new Date(l.run_at).toLocaleString()}</TableCell>
+                    <TableCell className={l.status === "FAILED" ? "text-red-500" : ""}>{l.status}</TableCell>
+                    <TableCell className="text-right">{l.ips_added}</TableCell>
+                    <TableCell className="text-right">{l.ips_updated}</TableCell>
+                    <TableCell className="text-right text-amber-500">{l.ips_orphaned}</TableCell>
+                    <TableCell className="text-right">{l.ips_restored}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
       </CardContent>
     </Card>
   )
