@@ -154,6 +154,19 @@ export interface MonitorMetrics {
   series: MonitorSeries
 }
 
+// Custom alert sounds (Pillar 14). Metadata only — audio bytes are fetched
+// separately from /sounds/{id}/audio.
+export interface AlertSound {
+  id: number
+  name: string
+}
+export interface SoundAssignments {
+  device_down_id: number | null
+  device_up_id: number | null
+  monitor_down_id: number | null
+  monitor_up_id: number | null
+}
+
 // Alert rules (Doc 5 §8) — device_id null = a global rule for every device.
 export type AlertChannel = "TELEGRAM" | "EMAIL"
 export interface AlertRule {

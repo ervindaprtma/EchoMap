@@ -1,5 +1,7 @@
+import { useEffect } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { NavLink, Route, Routes } from "react-router-dom"
+import { refreshSoundAssignments } from "@/lib/alerts"
 import { AlertSettings } from "@/components/AlertSettings"
 import { AccountMenu } from "@/components/AccountMenu"
 import { AuthProvider, useAuth, useRole } from "@/lib/auth"
@@ -42,6 +44,9 @@ function Gate() {
 function Shell() {
   const live = useRealtime()
   const { isAdmin, isSuperadmin } = useRole()
+  // Load which uploaded sound plays for each alert class (Pillar 14); falls back
+  // to the built-in chime until (and if) it resolves.
+  useEffect(() => { void refreshSoundAssignments() }, [])
   const health = useQuery({
     queryKey: ["health"],
     queryFn: async () => {

@@ -1,7 +1,8 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Trash2 } from "lucide-react"
+import { Play, Trash2 } from "lucide-react"
 import { api } from "@/lib/api"
+import { playSoundFile, refreshSoundAssignments } from "@/lib/alerts"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -12,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
-import type { AlertChannel, AlertRule, DeviceList } from "@/lib/types"
+import type { AlertChannel, AlertRule, AlertSound, DeviceList, SoundAssignments } from "@/lib/types"
 
 const CHANNELS: AlertChannel[] = ["TELEGRAM", "EMAIL"]
 // Radix Select forbids an empty-string item value, so a global rule uses this
@@ -33,6 +34,7 @@ export default function Settings() {
         <TabsContent value="alerts" className="space-y-6">
           <ChannelsCard />
           <AlertRulesCard />
+          <SoundsCard />
         </TabsContent>
       </Tabs>
     </div>
@@ -359,6 +361,125 @@ function AlertRulesCard() {
           </Button>
         </div>
         {err && <p className="text-xs text-red-500">{err}</p>}
+      </CardContent>
+    </Card>
+  )
+}
+
+// Radix Select forbids an empty value; NONE means "built-in chime".
+const NONE = "__none__"
+const SOUND_EVENTS: { field: keyof SoundAssignments; label: string }[] = [
+  { field: "device_down_id", label: "Device down" },
+  { field: "device_up_id", label: "Device recovery" },
+  { field: "monitor_down_id", label: "Monitor down" },
+  { field: "monitor_up_id", label: "Monitor recovery" },
+]
+const EMPTY_ASSIGN: SoundAssignments = {
+  device_down_id: null, device_up_id: null, monitor_down_id: null, monitor_up_id: null,
+}
+
+// Sound manager (Pillar 14): upload .wav, preview, delete, and assign one per
+// event class. Unassigned classes fall back to the synthesized chime.
+function SoundsCard() {
+  const qc = useQueryClient()
+  const soundsKey = ["sounds"]
+  const assignKey = ["settings", "sounds"]
+  const { data: soundsData } = useQuery({ queryKey: soundsKey, queryFn: () => api<{ items: AlertSound[] }>("/api/v1/sounds") })
+  const { data: assign } = useQuery({ queryKey: assignKey, queryFn: () => api<SoundAssignments>("/api/v1/settings/sounds") })
+  const [err, setErr] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const upload = useMutation({
+    // Multipart: a raw fetch (not the JSON api helper) so the browser sets the boundary.
+    mutationFn: async (file: File) => {
+      const fd = new FormData()
+      fd.append("file", file)
+      fd.append("name", file.name.replace(/\.wav$/i, ""))
+      const res = await fetch("/api/v1/sounds", { method: "POST", credentials: "include", body: fd })
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`)
+    },
+    onSuccess: () => { setErr(null); qc.invalidateQueries({ queryKey: soundsKey }) },
+    onError: (e) => setErr(e instanceof Error ? e.message : "upload failed"),
+  })
+  const del = useMutation({
+    mutationFn: (id: number) => api(`/api/v1/sounds/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: soundsKey })
+      qc.invalidateQueries({ queryKey: assignKey }) // FK ON DELETE SET NULL may have cleared an assignment
+      void refreshSoundAssignments()
+    },
+  })
+  const assignMut = useMutation({
+    mutationFn: (body: SoundAssignments) => api("/api/v1/settings/sounds", { method: "PUT", body: JSON.stringify(body) }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: assignKey }); void refreshSoundAssignments() },
+  })
+
+  const sounds = soundsData?.items ?? []
+  const setAssign = (field: keyof SoundAssignments, id: number | null) =>
+    assignMut.mutate({ ...(assign ?? EMPTY_ASSIGN), [field]: id })
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Alert sounds</CardTitle>
+        <CardDescription>
+          Upload <span className="font-mono">.wav</span> files (≤ 1 MB) and pick which plays per event; unassigned = built-in
+          chime. The per-browser sound toggle (topbar 🔔) still controls whether any sound plays.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center gap-3">
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".wav,audio/wav"
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) upload.mutate(f); e.target.value = "" }}
+          />
+          <Button size="sm" variant="secondary" disabled={upload.isPending} onClick={() => fileRef.current?.click()}>
+            Upload .wav
+          </Button>
+          {err && <span className="text-xs text-red-500">{err}</span>}
+        </div>
+
+        {sounds.length > 0 && (
+          <ul className="divide-y rounded border text-sm">
+            {sounds.map((s) => (
+              <li key={s.id} className="flex items-center justify-between px-3 py-1.5">
+                <span className="truncate">{s.name}</span>
+                <div className="flex items-center gap-3">
+                  <button type="button" onClick={() => void playSoundFile(s.id).catch(() => {})} className="text-muted-foreground hover:text-foreground" aria-label={`Preview ${s.name}`}>
+                    <Play className="h-4 w-4" />
+                  </button>
+                  <button type="button" onClick={() => del.mutate(s.id)} className="text-muted-foreground hover:text-red-500" aria-label={`Delete ${s.name}`}>
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="grid gap-2">
+          {SOUND_EVENTS.map(({ field, label }) => {
+            const cur = assign?.[field]
+            return (
+              <div key={field} className="grid grid-cols-[10rem_1fr] items-center gap-2">
+                <Label className="text-xs text-muted-foreground">{label}</Label>
+                <Select
+                  value={cur != null ? String(cur) : NONE}
+                  onValueChange={(v) => setAssign(field, v === NONE ? null : Number(v))}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NONE}>Built-in chime</SelectItem>
+                    {sounds.map((s) => <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )
+          })}
+        </div>
       </CardContent>
     </Card>
   )

@@ -27,9 +27,11 @@
 
 ## Designed, pending implementation (see [PRD.md](./PRD.md) §5 roadmap)
 
-**v1.1 — next in line (Phase 11):**
+- **Custom alert sounds (Phase 11)** — upload `.wav` files (≤ 1 MB) under Settings → Alerts and assign one per event class (device down/recovery, monitor down/recovery); unassigned classes fall back to the built-in synthesized chime. Playback fetches the file with the session cookie → blob → `Audio`.
 
-- **Custom `.wav` alert sounds** — the last Phase 11 item (the ad-hoc **Telnet** tool, **alert-rules CRUD + Settings→Alerts tab**, the **email (SMTP) channel**, and the single **"flapping" alert** already shipped); then the **housekeeping retention sweep** (Phase 11.5, priority — nothing prunes the log/session tables yet).
+**v1.1 — next in line:**
+
+- **Phase 11 is complete** (Telnet tool, alert-rules CRUD + Settings→Alerts tab, email/SMTP channel, flapping alert, custom `.wav` sounds). Next: the **housekeeping retention sweep** (Phase 11.5, priority — nothing prunes the log/session tables yet), then **System Resource Monitoring** (v1.2, Pillar 16 — design approved).
 
 **Original roadmap (Slices 3–7):**
 
@@ -67,7 +69,7 @@ The nine product requirements and where each stands (details per pillar in [PRD.
 | User management + sessions + roles (Superadmin / Administrator / Operator) | ✅ Done (Phase 8; argon2id, cookie sessions, server-side RBAC) |
 | Telnet tool (ad-hoc, zero-credential handoff) | ✅ Done (Phase 11) |
 | Custom port / protocol / URL monitors (per-device, custom interval) | ✅ Done (Phase 9; TCP/HTTP(S), scheduler, `monitor.status`, test endpoint) |
-| Custom uploaded `.wav` alert sounds + URL health checks | 🟡 URL health checks done (Phase 9, monitor `url_override`); `.wav` upload/assign pending (Phase 11) |
+| Custom uploaded `.wav` alert sounds + URL health checks | ✅ Done — URL health checks (Phase 9, monitor `url_override`) + `.wav` upload/assign/playback (Phase 11) |
 | Historical graphs per device (latency / loss / jitter; monitor charts) | ✅ Done (Phase 10; metrics read APIs + `/devices/:id/history` Recharts page, live-tested) |
 
 ---

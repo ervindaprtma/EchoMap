@@ -2,6 +2,11 @@
 // Per-browser preferences in localStorage — nothing server-side, so each operator
 // decides for their own workstation. Fired from the app shell's WS handler, so
 // they work on any page.
+//
+// Which SOUND plays is a server-side per-event-class assignment (Pillar 14): an
+// uploaded .wav or, when unassigned, the built-in synthesized chime below.
+
+import { api } from "@/lib/api"
 
 export interface AlertPrefs {
   sound: boolean
@@ -58,6 +63,63 @@ export function playChime(kind: AlertKind) {
   }
 }
 
+// ---- custom uploaded sounds (Pillar 14) --------------------------------------
+// Assignment of an uploaded sound id to each event class, cached from
+// GET /settings/sounds and refreshed on login + after a Settings save.
+export type SoundEvent = "device_down" | "device_up" | "monitor_down" | "monitor_up"
+
+let soundIds: Record<SoundEvent, number | null> = {
+  device_down: null, device_up: null, monitor_down: null, monitor_up: null,
+}
+const soundBlobs = new Map<number, string>() // sound id -> object URL (fetched once)
+
+function clearBlobs() {
+  soundBlobs.forEach((url) => URL.revokeObjectURL(url))
+  soundBlobs.clear()
+}
+
+export async function refreshSoundAssignments(): Promise<void> {
+  try {
+    const a = await api<{
+      device_down_id: number | null
+      device_up_id: number | null
+      monitor_down_id: number | null
+      monitor_up_id: number | null
+    }>("/api/v1/settings/sounds")
+    soundIds = {
+      device_down: a.device_down_id, device_up: a.device_up_id,
+      monitor_down: a.monitor_down_id, monitor_up: a.monitor_up_id,
+    }
+    clearBlobs() // a reassigned class may now point at different bytes
+  } catch {
+    // keep whatever we have — the chime fallback always works
+  }
+}
+
+// playForEvent plays the assigned .wav for an event class, or the chime if none
+// is assigned (or the fetch/playback fails — the fallback must never be missed).
+function playForEvent(evt: SoundEvent, kind: AlertKind) {
+  const id = soundIds[evt]
+  if (id == null) {
+    playChime(kind)
+    return
+  }
+  void playSoundFile(id).catch(() => playChime(kind))
+}
+
+// playSoundFile fetches with the session cookie (an <audio src> can't), caches
+// the blob URL, and plays it. Exported so the Settings preview button reuses it.
+export async function playSoundFile(id: number): Promise<void> {
+  let url = soundBlobs.get(id)
+  if (!url) {
+    const res = await fetch(`/api/v1/sounds/${id}/audio`, { credentials: "include" })
+    if (!res.ok) throw new Error(`sound ${id} fetch ${res.status}`)
+    url = URL.createObjectURL(await res.blob())
+    soundBlobs.set(id, url)
+  }
+  await new Audio(url).play()
+}
+
 function beep(ctx: AudioContext, freq: number, delay: number, dur: number) {
   const osc = ctx.createOscillator()
   const gain = ctx.createGain()
@@ -85,7 +147,7 @@ export function fireAlert(ev: StatusFrame) {
   const kind = alertKind(ev)
   if (!kind) return
   const prefs = loadPrefs()
-  if (prefs.sound) playChime(kind)
+  if (prefs.sound) playForEvent(kind === "down" ? "device_down" : "device_up", kind)
   if (prefs.popup) showPopup(kind, ev)
 }
 
@@ -123,7 +185,7 @@ export function fireMonitorAlert(ev: MonitorFrame) {
   else if (ev.to_status === "UP" && ev.from_status === "DOWN") kind = "up"
   if (!kind) return
   const prefs = loadPrefs()
-  if (prefs.sound) playChime(kind)
+  if (prefs.sound) playForEvent(kind === "down" ? "monitor_down" : "monitor_up", kind)
   if (prefs.popup) showMonitorPopup(kind, ev)
 }
 

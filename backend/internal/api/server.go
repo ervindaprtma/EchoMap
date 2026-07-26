@@ -112,6 +112,14 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/settings/channels", s.gate(RoleAdmin, s.putChannelSettings))
 	mux.HandleFunc("POST /api/v1/settings/channels/test-email", s.gate(RoleAdmin, s.testEmail))
 
+	// --- alert sounds (Phase 11, Pillar 14): read/playback = Operator, manage = Admin ---
+	mux.HandleFunc("GET /api/v1/sounds", s.gate(RoleOperator, s.listSounds))
+	mux.HandleFunc("GET /api/v1/sounds/{id}/audio", s.gate(RoleOperator, s.getSoundAudio))
+	mux.HandleFunc("POST /api/v1/sounds", s.gate(RoleAdmin, s.createSound))
+	mux.HandleFunc("DELETE /api/v1/sounds/{id}", s.gate(RoleAdmin, s.deleteSound))
+	mux.HandleFunc("GET /api/v1/settings/sounds", s.gate(RoleOperator, s.getSoundAssignments))
+	mux.HandleFunc("PUT /api/v1/settings/sounds", s.gate(RoleAdmin, s.putSoundAssignments))
+
 	// --- alert rules (Phase 11): read = Operator, write = Admin (Doc 5 §8) ---
 	mux.HandleFunc("GET /api/v1/alert-rules", s.gate(RoleOperator, s.listAlertRules))
 	mux.HandleFunc("POST /api/v1/alert-rules", s.gate(RoleAdmin, s.createAlertRule))
