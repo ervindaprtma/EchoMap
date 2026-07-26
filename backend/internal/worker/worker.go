@@ -49,6 +49,10 @@ func Run(ctx context.Context, cfg config.Config, st *store.Store, b *bus.Bus, tw
 	}
 	go runResolver(ctx, st, b, dnsEvery)
 
+	// Hourly retention sweep (Doc 3 §4) — keeps the append-only + session tables
+	// bounded. Boot sweep clears backlog immediately.
+	go runHousekeeping(ctx, st)
+
 	log.Printf("worker started (ping interval %s, concurrency %d, dns recheck %s)",
 		interval, cfg.DiscoveryConcurrency, dnsEvery)
 

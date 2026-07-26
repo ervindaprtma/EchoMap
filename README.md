@@ -31,7 +31,7 @@
 
 **v1.1 — next in line:**
 
-- **Phase 11 is complete** (Telnet tool, alert-rules CRUD + Settings→Alerts tab, email/SMTP channel, flapping alert, custom `.wav` sounds). Next: the **housekeeping retention sweep** (Phase 11.5, priority — nothing prunes the log/session tables yet), then **System Resource Monitoring** (v1.2, Pillar 16 — design approved).
+- **Phase 11 + 11.5 are complete** (Telnet tool, alert-rules CRUD + Settings→Alerts tab, email/SMTP channel, flapping alert, custom `.wav` sounds, and the hourly retention sweep). Next: **System Resource Monitoring** (v1.2, Pillar 16 — design approved).
 
 **Original roadmap (Slices 3–7):**
 
@@ -231,4 +231,4 @@ Tunables (have sensible defaults in compose): `PING_INTERVAL_SECONDS` (15–30),
 - **Secrets are encrypted at rest** (AES-256-GCM) and returned **masked** (`••••`), accepted write-only.
 - **Device credentials are never stored.** SSH/Telnet service launchers only hand off to the user's own client (`ssh://` handler or web-SSH gateway) — the user types credentials there each session, so a breach of EchoMap exposes no device logins.
 - **Destructive actions are guarded** *(designed — lands with Slice 6)* — hard delete of a device becomes a two-step, type-to-confirm flow, only valid on an `ORPHANED` device via the safety path. Today's delete is a plain guarded endpoint.
-- **Retention is bounded** *(designed — lands with Slice 7)* — `status_transitions` (24 h), `alert_events` / `netbox_sync_logs` (90 d), InfluxDB (30 d raw + rollups) pruned by an hourly sweep.
+- **Retention is bounded** *(✅ Phase 11.5)* — an hourly worker sweep prunes `status_transitions` (24 h), `alert_events` / `netbox_sync_logs` / `event_logs` (90 d), and expired `sessions` (idle > 12 h or age > 7 d); InfluxDB (30 d raw + rollups) is bounded by its own bucket policy.
