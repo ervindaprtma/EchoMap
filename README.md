@@ -24,6 +24,8 @@
 - **Custom monitors (Phase 9)** — per-device **TCP / HTTP(S)** checks (with an absolute-URL override for endpoint health), each on its own interval (seconds/minutes/hours). A worker scheduler runs the same debounce as ping; a confirmed transition writes a log row, fires a Telegram alert + browser pop-up/sound, and pushes a `monitor.status` WS frame. Monitors pause while their device is DOWN, HTTPS records cert-expiry, and an on-demand **"Test now"** runs one check immediately. Configured in the device dialog's **Monitoring** tab (Admin+).
 - **Alert configuration from the UI (Phase 11)** — an Admin **Settings → Alerts** page: create/toggle/delete **alert rules** (per-device or global; per-event switches for down / up / flapping / orphaned) and set delivery-channel credentials. Both **Telegram** and **email (SMTP)** deliver: configure a bot token or SMTP server (host/port/username/password/from + TLS mode, with a **"Send test"** button), and route each rule to a chat id or email address. Secrets are AES-256-GCM encrypted at rest. Previously alert rules could only be created via SQL.
 - **History charts (Phase 10)** — a **History** action (Devices row · node context menu) opens `/devices/:id/history`: a range picker (1h/6h/24h/7d/30d) over a ping group (latency avg+p95, packet loss, read-time RFC 3550 jitter, availability strip) plus one group per custom monitor (connect/response time, HTTP status-code band, availability, TLS days-to-expiry for HTTPS). Read-only Recharts; degrades to a clean "no samples" state when InfluxDB isn't configured.
+- **Bulk subnet discovery (Slice 3)** — the Add-Device dialog's **Subnet Scan** tab sweeps a CIDR (e.g. `10.10.20.0/24`): every host is pinged once, dead IPs are **skipped immediately**, and live ones are added as UP devices under a subnet (so they inherit its site), with a live progress bar (`added` / `skipped` / current IP). Runs as a bounded in-process sweep in the `api` (no extra queue), Admin+. *Netbox import is still pending — Slice 6.*
+- **SNMP fingerprinting (Slice 4)** — set a read community in **Settings → SNMP** (encrypted at rest) and flip a device's **Enable SNMP** switch: a worker scanner reads its `sysDescr`/`sysObjectID`/`sysName` and interface table over SNMP v2c, classifies **vendor / model / icon**, discovers **interfaces**, and renames an IP-named device to its `sysName`. A **"Fingerprint now"** button runs it on demand. No device credentials are stored — the community lives once in settings. *(SNMPv3 is a future item.)*
 
 ## Designed, pending implementation (see [PRD.md](./PRD.md) §5 roadmap)
 
@@ -35,8 +37,7 @@
 
 **Original roadmap (Slices 3–7):**
 
-- **Bulk discovery** (subnet CIDR sweep + Netbox import, skip-on-fail, live progress) — Slice 3.
-- **SNMP fingerprinting** (vendor/model/icon from `sysObjectID`, naming fallback chain) — Slice 4.
+- **Bulk discovery — Netbox import** (subnet CIDR sweep is ✅ done; Netbox preview/import + ORPHANED still pending) — Slice 6.
 - **Netbox hourly sync + ORPHANED safety flow** (never hard-delete; two-step, type-to-confirm resolution UI) — Slice 6.
 - **Alerting** — ✅ complete as of Phase 11 (Telegram + email/SMTP + templates + sound/pop-up + edge-triggered flapping alert).
 - **Engineer utilities** — IP calculator and the standalone drawing-only **Topology Designer** (the `designs` table/API groundwork exists).
@@ -112,7 +113,7 @@ EchoMap is a **worker-oriented monolith-of-services**: one Go binary that boots 
 
 - **Backend:** Go (goroutines for concurrent ping/SNMP). A Python (FastAPI + Celery) mapping is documented per section.
 - **Frontend:** React + Vite, `shadcn/ui` (Radix + Tailwind), React Flow (topology), Recharts (metrics), TanStack Query, native WebSocket.
-- **Data:** PostgreSQL (source of truth), Redis (Pub/Sub + cache; the Asynq queue arrives with Slice 3), InfluxDB 2.x (time-series; Prometheus is a documented alternative).
+- **Data:** PostgreSQL (source of truth), Redis (Pub/Sub + cache), InfluxDB 2.x (time-series; Prometheus is a documented alternative).
 - **Deploy:** single `docker-compose.yml`; ping containers get `cap_add: NET_RAW` for unprivileged ICMP; stores are health-gated via `depends_on: condition: service_healthy`.
 
 ---
@@ -135,7 +136,7 @@ EchoMap runs as one `docker-compose` stack of five processes: the Go binary in t
 |-----------|-----|-------|
 | Go `api` + `worker` | ~150–300 MB total | ICMP at concurrency 32 is cheap; bursty per sweep |
 | PostgreSQL 16 | ~256–512 MB | small DB — relational tables are retention-bounded |
-| Redis 7 | ~64–128 MB | Pub/Sub + cache (+ Asynq queue in Slice 3) |
+| Redis 7 | ~64–128 MB | Pub/Sub + cache |
 | InfluxDB 2.x | ~0.5–1 GB | the driver; give it room or it's the first to feel tight |
 
 **Disk is dominated by InfluxDB retention.** Rough model: `devices × samples/day × retention days`. At 500 devices probing every ~20 s over a 30-day window that's ~65M points, which TSM compresses to a few GB; the relational DB and Docker images/volumes add a few more. The **v1.1 custom monitors (P13)** add a second time-series measurement (`monitor_metrics`), so budget extra disk proportional to how many monitors you configure. **Use SSD/NVMe** — Postgres and InfluxDB are I/O-sensitive; avoid spinning disks or throttled network block storage.

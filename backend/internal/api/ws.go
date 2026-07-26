@@ -32,6 +32,13 @@ func (h *hub) add(c *wsClient) {
 	h.mu.Unlock()
 }
 
+// count is the live WS client tally (Pillar 16 api self-report).
+func (h *hub) count() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.clients)
+}
+
 func (h *hub) remove(c *wsClient) {
 	h.mu.Lock()
 	delete(h.clients, c) // never close c.send: broadcast() holds the same lock, so a

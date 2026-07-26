@@ -7,6 +7,8 @@ import (
 
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"github.com/influxdata/influxdb-client-go/v2/api"
+
+	"echomap/internal/sysmon"
 )
 
 type Writer struct {
@@ -66,6 +68,60 @@ func (w *Writer) WriteMonitor(monitorID, deviceID int64, kind string, up bool, d
 	}
 	if certDaysLeft != nil {
 		p.AddField("cert_days_left", *certDaysLeft)
+	}
+	p.SetTime(time.Now())
+	w.write.WritePoint(p)
+}
+
+// WriteSysHost records one host sample (Pillar 16, sys_host). Disk fields are
+// omitted when /hostfs isn't mounted — never zero-filled.
+func (w *Writer) WriteSysHost(h sysmon.HostStats) {
+	if w.write == nil {
+		return
+	}
+	p := influxdb2.NewPointWithMeasurement("sys_host").
+		AddField("cpu_pct", h.CPUPct).
+		AddField("mem_used_bytes", int64(h.MemUsed)).
+		AddField("mem_total_bytes", int64(h.MemTotal)).
+		AddField("swap_used_bytes", int64(h.SwapUsed)).
+		AddField("swap_total_bytes", int64(h.SwapTotal)).
+		AddField("load1", h.Load1).
+		AddField("load5", h.Load5).
+		AddField("load15", h.Load15).
+		AddField("uptime_s", h.UptimeS)
+	if h.HasDisk {
+		p.AddField("disk_used_bytes", int64(h.DiskUsed)).
+			AddField("disk_total_bytes", int64(h.DiskTotal))
+	}
+	p.SetTime(time.Now())
+	w.write.WritePoint(p)
+}
+
+// WriteSysService records one service self-point (sys_service, tag=service). self
+// is nil for non-Go services; extra carries role-specific fields (ws_clients,
+// monitor_backlog, …).
+func (w *Writer) WriteSysService(service string, up bool, self *sysmon.SelfStats, extra map[string]float64) {
+	if w.write == nil {
+		return
+	}
+	upVal := 0
+	if up {
+		upVal = 1
+	}
+	p := influxdb2.NewPointWithMeasurement("sys_service").
+		AddTag("service", service).
+		AddField("up", upVal)
+	if self != nil {
+		p.AddField("goroutines", int64(self.Goroutines)).
+			AddField("heap_bytes", int64(self.HeapBytes)).
+			AddField("uptime_s", self.UptimeS).
+			AddField("db_pool_total", int64(self.DBPoolTotal)).
+			AddField("db_pool_idle", int64(self.DBPoolIdle)).
+			AddField("db_ping_ms", self.DBPingMs).
+			AddField("redis_ping_ms", self.RedisPingMs)
+	}
+	for k, v := range extra {
+		p.AddField(k, v)
 	}
 	p.SetTime(time.Now())
 	w.write.WritePoint(p)

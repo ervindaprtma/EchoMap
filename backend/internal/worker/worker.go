@@ -53,6 +53,14 @@ func Run(ctx context.Context, cfg config.Config, st *store.Store, b *bus.Bus, tw
 	// bounded. Boot sweep clears backlog immediately.
 	go runHousekeeping(ctx, st)
 
+	// System self-monitoring collector (Pillar 16, Doc 3 §11) — host /proc + this
+	// role's self-stats → Influx every 30 s.
+	go runSysmon(ctx, st, b, tw)
+
+	// SNMP fingerprint scanner (Slice 4, Doc 3 §1 step 5) — fingerprints
+	// snmp_enabled devices lacking sys_descr; no-ops until a community is set.
+	go runSNMPScanner(ctx, st, cfg.DiscoveryConcurrency)
+
 	log.Printf("worker started (ping interval %s, concurrency %d, dns recheck %s)",
 		interval, cfg.DiscoveryConcurrency, dnsEvery)
 

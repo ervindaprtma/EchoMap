@@ -342,3 +342,16 @@ func (s *Store) DeleteDevice(ctx context.Context, id int64) error {
 	}
 	return tx.Commit(ctx)
 }
+
+// PoolStat / PingDB back the Pillar 16 self-report (sysmon.DBPinger).
+func (s *Store) PoolStat() (total, idle int32) {
+	st := s.pool.Stat()
+	return st.TotalConns(), st.IdleConns()
+}
+func (s *Store) PingDB(ctx context.Context) (float64, error) {
+	t := time.Now()
+	if err := s.pool.Ping(ctx); err != nil {
+		return 0, err
+	}
+	return float64(time.Since(t).Microseconds()) / 1000, nil
+}

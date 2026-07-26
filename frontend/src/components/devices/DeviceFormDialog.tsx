@@ -17,6 +17,8 @@ import { MapSelect } from "./MapSelect"
 import { ParentSelect } from "./ParentSelect"
 import { ServicesEditor } from "./ServicesEditor"
 import { MonitorsEditor } from "./MonitorsEditor"
+import { SubnetScan } from "./SubnetScan"
+import { SnmpFingerprint } from "./SnmpFingerprint"
 
 // Create + edit dialog (Doc 4 §3.2). Controlled inputs + server-side validation:
 // the API's error strings (cycle, duplicate, unresolvable hostname) surface
@@ -31,6 +33,7 @@ export function DeviceFormDialog({
   const qc = useQueryClient()
   const editing = !!device
 
+  const [tab, setTab] = useState("general")
   const [mode, setMode] = useState<"ip" | "hostname">("ip")
   const [target, setTarget] = useState("")
   const [name, setName] = useState("")
@@ -41,6 +44,7 @@ export function DeviceFormDialog({
 
   useEffect(() => {
     if (!open) return
+    setTab("general")
     setMode(device?.hostname ? "hostname" : "ip")
     setTarget(device ? (device.hostname ?? device.ip_address) : "")
     setName(device?.name ?? "")
@@ -121,11 +125,12 @@ export function DeviceFormDialog({
           <DialogTitle>{editing ? `Edit ${device!.name}` : "Add Device"}</DialogTitle>
         </DialogHeader>
 
-        <Tabs defaultValue="general">
-          <TabsList className={editing ? "" : "hidden"}>
-            <TabsTrigger value="general">General</TabsTrigger>
+        <Tabs value={tab} onValueChange={setTab}>
+          <TabsList>
+            <TabsTrigger value="general">{editing ? "General" : "Single Device"}</TabsTrigger>
             {editing && <TabsTrigger value="services">Services</TabsTrigger>}
             {editing && <TabsTrigger value="monitoring">Monitoring</TabsTrigger>}
+            {!editing && <TabsTrigger value="subnet">Subnet Scan</TabsTrigger>}
           </TabsList>
 
           <TabsContent value="general" className="space-y-4 pt-2">
@@ -193,6 +198,8 @@ export function DeviceFormDialog({
               <Switch id="snmp" checked={snmp} onCheckedChange={setSnmp} />
               <Label htmlFor="snmp">Enable SNMP fingerprinting</Label>
             </div>
+
+            {editing && snmp && <SnmpFingerprint device={device!} />}
           </TabsContent>
 
           {editing && (
@@ -206,16 +213,25 @@ export function DeviceFormDialog({
               <MonitorsEditor deviceId={device!.id} />
             </TabsContent>
           )}
+
+          {!editing && (
+            <TabsContent value="subnet" className="pt-2">
+              <SubnetScan onClose={() => onOpenChange(false)} />
+            </TabsContent>
+          )}
         </Tabs>
 
         {save.isError && <p className="text-sm text-red-500">{(save.error as Error).message}</p>}
 
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button disabled={!canSave || save.isPending} onClick={() => save.mutate()}>
-            {save.isPending ? "Saving…" : editing ? "Save changes" : "Add Device"}
-          </Button>
-        </DialogFooter>
+        {/* Subnet Scan carries its own Scan/Done buttons — hide the single-device footer there. */}
+        {tab !== "subnet" && (
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button disabled={!canSave || save.isPending} onClick={() => save.mutate()}>
+              {save.isPending ? "Saving…" : editing ? "Save changes" : "Add Device"}
+            </Button>
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   )

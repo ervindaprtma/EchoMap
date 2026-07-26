@@ -295,3 +295,11 @@ func nilIfEmpty(s string) *string {
 	}
 	return &s
 }
+
+// MonitorBacklog counts enabled monitors overdue for a check (Pillar 16 worker self-report).
+func (s *Store) MonitorBacklog(ctx context.Context) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx,
+		`SELECT count(*) FROM device_monitors WHERE enabled AND next_check_at < now() - interval '30 seconds'`).Scan(&n)
+	return n, err
+}

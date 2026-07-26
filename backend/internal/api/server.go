@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"echomap/internal/bus"
@@ -17,12 +18,18 @@ import (
 )
 
 type server struct {
-	cfg     config.Config
-	store   *store.Store
-	hub     *hub
-	limiter *loginLimiter
-	reader  *tsdb.Reader
-	email   *notify.Email
+	cfg       config.Config
+	store     *store.Store
+	hub       *hub
+	limiter   *loginLimiter
+	reader    *tsdb.Reader
+	writer    *tsdb.Writer
+	bus       *bus.Bus
+	email     *notify.Email
+	startedAt time.Time
+
+	batchMu sync.Mutex              // guards batches (Slice 3 subnet discovery)
+	batches map[string]*batchStatus // in-flight/completed sweep progress, keyed by batch_id
 }
 
 // Run starts the HTTP server and blocks until ctx is cancelled, then drains.
@@ -30,7 +37,13 @@ type server struct {
 func Run(ctx context.Context, cfg config.Config, st *store.Store, b *bus.Bus) error {
 	reader := tsdb.NewReader(cfg.InfluxURL, cfg.InfluxToken, cfg.InfluxOrg, cfg.InfluxBucket)
 	defer reader.Close()
-	s := &server{cfg: cfg, store: st, hub: newHub(), limiter: newLoginLimiter(), reader: reader, email: notify.NewEmail(st)}
+	writer := tsdb.New(cfg.InfluxURL, cfg.InfluxToken, cfg.InfluxOrg, cfg.InfluxBucket)
+	defer writer.Close()
+	s := &server{cfg: cfg, store: st, hub: newHub(), limiter: newLoginLimiter(),
+		reader: reader, writer: writer, bus: b, email: notify.NewEmail(st), startedAt: time.Now(),
+		batches: map[string]*batchStatus{}}
+
+	go s.runSelfReport(ctx) // Pillar 16: write this role's sys_service{api} point every 30s
 
 	// Phase 8: seed the bootstrap Superadmin from APP_ADMIN_PASSWORD on an empty DB.
 	if err := s.bootstrapSuperadmin(ctx); err != nil {
@@ -106,11 +119,19 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/devices/{id}", s.gate(RoleOperator, s.getDevice))
 	mux.HandleFunc("PATCH /api/v1/devices/{id}", s.gate(RoleAdmin, s.patchDevice))
 	mux.HandleFunc("DELETE /api/v1/devices/{id}", s.gate(RoleAdmin, s.deleteDevice))
+	// Slice 3: bulk subnet discovery (skip-on-fail CIDR sweep). Create = Admin; status read = Operator.
+	mux.HandleFunc("POST /api/v1/devices/discover/subnet", s.gate(RoleAdmin, s.discoverSubnet))
+	mux.HandleFunc("GET /api/v1/devices/discover/{batch_id}/status", s.gate(RoleOperator, s.discoverStatus))
+	// Slice 4: SNMP fingerprinting. Interfaces read = Operator; run a fingerprint = Admin.
+	mux.HandleFunc("GET /api/v1/devices/{id}/interfaces", s.gate(RoleOperator, s.listInterfaces))
+	mux.HandleFunc("POST /api/v1/devices/{id}/snmp/fingerprint", s.gate(RoleAdmin, s.fingerprintDevice))
 
 	// --- settings (Admin) ---
 	mux.HandleFunc("GET /api/v1/settings/channels", s.gate(RoleAdmin, s.getChannelSettings))
 	mux.HandleFunc("PUT /api/v1/settings/channels", s.gate(RoleAdmin, s.putChannelSettings))
 	mux.HandleFunc("POST /api/v1/settings/channels/test-email", s.gate(RoleAdmin, s.testEmail))
+	mux.HandleFunc("GET /api/v1/settings/snmp", s.gate(RoleAdmin, s.getSNMPSettings))
+	mux.HandleFunc("PUT /api/v1/settings/snmp", s.gate(RoleAdmin, s.putSNMPSettings))
 
 	// --- alert sounds (Phase 11, Pillar 14): read/playback = Operator, manage = Admin ---
 	mux.HandleFunc("GET /api/v1/sounds", s.gate(RoleOperator, s.listSounds))
@@ -160,6 +181,10 @@ func (s *server) routes(mux *http.ServeMux) {
 	// History metrics reads (Phase 10, §8.5–8.6) — read-only, Operator+.
 	mux.HandleFunc("GET /api/v1/devices/{id}/metrics/ping", s.gate(RoleOperator, s.metricsPing))
 	mux.HandleFunc("GET /api/v1/monitors/{id}/metrics", s.gate(RoleOperator, s.metricsMonitor))
+
+	// --- system self-monitoring (Phase v1.2, Pillar 16): Admin+ ---
+	mux.HandleFunc("GET /api/v1/system/overview", s.gate(RoleAdmin, s.systemOverview))
+	mux.HandleFunc("GET /api/v1/system/history", s.gate(RoleAdmin, s.systemHistory))
 	// TODO(phase11+): discovery ingestion, alert-sounds.
 }
 

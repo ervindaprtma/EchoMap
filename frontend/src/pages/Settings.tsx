@@ -30,14 +30,86 @@ export default function Settings() {
       <Tabs defaultValue="alerts">
         <TabsList>
           <TabsTrigger value="alerts">Alerts</TabsTrigger>
+          <TabsTrigger value="snmp">SNMP</TabsTrigger>
         </TabsList>
         <TabsContent value="alerts" className="space-y-6">
           <ChannelsCard />
           <AlertRulesCard />
           <SoundsCard />
         </TabsContent>
+        <TabsContent value="snmp" className="space-y-6">
+          <SnmpCard />
+        </TabsContent>
       </Tabs>
     </div>
+  )
+}
+
+// SNMP defaults (Slice 4). The community is the credential the worker's fingerprint
+// scanner uses; it's write-only (GET returns •••••••• when set). Devices only carry
+// an "enable SNMP" toggle — the community lives here, encrypted at rest.
+const SNMP_VERSIONS = ["v2c", "v3"]
+function SnmpCard() {
+  const qc = useQueryClient()
+  const { data } = useQuery({
+    queryKey: ["settings", "snmp"],
+    queryFn: () => api<{ default_version: string; default_community: string }>("/api/v1/settings/snmp"),
+  })
+  const [version, setVersion] = useState<string | null>(null)
+  const [community, setCommunity] = useState<string | null>(null)
+
+  const save = useMutation({
+    mutationFn: () =>
+      api("/api/v1/settings/snmp", {
+        method: "PUT",
+        body: JSON.stringify({
+          default_version: version ?? data?.default_version,
+          ...(community === null ? {} : { default_community: community }),
+        }),
+      }),
+    onSuccess: () => {
+      setCommunity(null)
+      qc.invalidateQueries({ queryKey: ["settings", "snmp"] })
+    },
+  })
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>SNMP</CardTitle>
+        <CardDescription>
+          Default read community + version used to fingerprint SNMP-enabled devices (vendor, model,
+          sysName, interfaces). v3 is not yet supported.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid max-w-md grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label>Version</Label>
+            <Select value={version ?? data?.default_version ?? "v2c"} onValueChange={setVersion}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {SNMP_VERSIONS.map((v) => <SelectItem key={v} value={v}>{v}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="snmp-community">Read community</Label>
+            <Input
+              id="snmp-community"
+              type="password"
+              value={community ?? data?.default_community ?? ""}
+              onChange={(e) => setCommunity(e.target.value)}
+              placeholder="public"
+            />
+          </div>
+        </div>
+        {save.isError && <p className="text-sm text-red-500">{(save.error as Error).message}</p>}
+        <Button disabled={save.isPending} onClick={() => save.mutate()}>
+          {save.isPending ? "Saving…" : "Save SNMP settings"}
+        </Button>
+      </CardContent>
+    </Card>
   )
 }
 

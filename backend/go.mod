@@ -4,6 +4,7 @@ go 1.23
 
 require (
 	github.com/coder/websocket v1.8.12
+	github.com/gosnmp/gosnmp v1.37.0
 	github.com/influxdata/influxdb-client-go/v2 v2.14.0
 	github.com/jackc/pgx/v5 v5.7.2
 	github.com/redis/go-redis/v9 v9.7.0

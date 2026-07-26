@@ -53,6 +53,20 @@ type MonitorStatusEvent struct {
 	ChangedAt  time.Time `json:"changed_at"`
 }
 
+// DiscoveryEvent is a `discovery.progress` / `discovery.done` WS frame (Doc 5 §1):
+// a subnet sweep reporting per-IP progress or batch completion. Rides ChannelStatus
+// like the others so the API relay stays a single subscriber; clients switch on Type.
+type DiscoveryEvent struct {
+	Type      string `json:"type"` // "discovery.progress" | "discovery.done"
+	BatchID   string `json:"batch_id"`
+	Processed int    `json:"processed"`
+	Total     int    `json:"total"`
+	Added     int    `json:"added"`
+	Skipped   int    `json:"skipped"`
+	CurrentIP string `json:"current_ip,omitempty"`
+	Action    string `json:"action,omitempty"` // per-IP: "added" | "skipped" | "exists"
+}
+
 type Bus struct {
 	rdb *redis.Client
 }
@@ -99,8 +113,27 @@ func (b *Bus) PublishMonitorStatus(ctx context.Context, ev MonitorStatusEvent) e
 	return b.rdb.Publish(ctx, ChannelStatus, data).Err()
 }
 
+// PublishDiscovery publishes a discovery frame (Type set by the caller) on
+// ChannelStatus so the single API relay fans it out to browsers unchanged.
+func (b *Bus) PublishDiscovery(ctx context.Context, ev DiscoveryEvent) error {
+	data, err := json.Marshal(ev)
+	if err != nil {
+		return err
+	}
+	return b.rdb.Publish(ctx, ChannelStatus, data).Err()
+}
+
 func (b *Bus) SubscribeStatus(ctx context.Context) *redis.PubSub {
 	return b.rdb.Subscribe(ctx, ChannelStatus)
 }
 
 func (b *Bus) Close() error { return b.rdb.Close() }
+
+// Ping measures Redis round-trip latency in milliseconds (Pillar 16 self-report).
+func (b *Bus) Ping(ctx context.Context) (float64, error) {
+	t := time.Now()
+	if err := b.rdb.Ping(ctx).Err(); err != nil {
+		return 0, err
+	}
+	return float64(time.Since(t).Microseconds()) / 1000, nil
+}
