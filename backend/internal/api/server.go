@@ -11,6 +11,7 @@ import (
 
 	"echomap/internal/bus"
 	"echomap/internal/config"
+	"echomap/internal/notify"
 	"echomap/internal/store"
 	"echomap/internal/tsdb"
 )
@@ -21,6 +22,7 @@ type server struct {
 	hub     *hub
 	limiter *loginLimiter
 	reader  *tsdb.Reader
+	email   *notify.Email
 }
 
 // Run starts the HTTP server and blocks until ctx is cancelled, then drains.
@@ -28,7 +30,7 @@ type server struct {
 func Run(ctx context.Context, cfg config.Config, st *store.Store, b *bus.Bus) error {
 	reader := tsdb.NewReader(cfg.InfluxURL, cfg.InfluxToken, cfg.InfluxOrg, cfg.InfluxBucket)
 	defer reader.Close()
-	s := &server{cfg: cfg, store: st, hub: newHub(), limiter: newLoginLimiter(), reader: reader}
+	s := &server{cfg: cfg, store: st, hub: newHub(), limiter: newLoginLimiter(), reader: reader, email: notify.NewEmail(st)}
 
 	// Phase 8: seed the bootstrap Superadmin from APP_ADMIN_PASSWORD on an empty DB.
 	if err := s.bootstrapSuperadmin(ctx); err != nil {
@@ -108,6 +110,7 @@ func (s *server) routes(mux *http.ServeMux) {
 	// --- settings (Admin) ---
 	mux.HandleFunc("GET /api/v1/settings/channels", s.gate(RoleAdmin, s.getChannelSettings))
 	mux.HandleFunc("PUT /api/v1/settings/channels", s.gate(RoleAdmin, s.putChannelSettings))
+	mux.HandleFunc("POST /api/v1/settings/channels/test-email", s.gate(RoleAdmin, s.testEmail))
 
 	// --- alert rules (Phase 11): read = Operator, write = Admin (Doc 5 §8) ---
 	mux.HandleFunc("GET /api/v1/alert-rules", s.gate(RoleOperator, s.listAlertRules))

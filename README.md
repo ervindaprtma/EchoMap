@@ -22,24 +22,24 @@
 - **Users, roles & sessions (Phase 8)** — Superadmin / Administrator / Operator, enforced **server-side on every route** (the UI just hides what a role can't use). argon2id passwords, opaque tokens stored SHA-256-hashed, **HttpOnly session cookies** (retires the dev bearer for browsers; the static token stays for automation), 12 h idle / 7 d absolute expiry, per-session revoke, login rate-limiting, a bootstrap Superadmin seeded from `APP_ADMIN_PASSWORD` with a forced first-login password change.
 - **Event logging (Phase 8)** — an Admin **Logs** page: searchable, filterable, paginated table over INFO / NOTICE / ALERT / ERROR / AUDIT levels (AUDIT rows Superadmin-only). Login/config/transition/alert events are recorded; the page refreshes on a short poll.
 - **Custom monitors (Phase 9)** — per-device **TCP / HTTP(S)** checks (with an absolute-URL override for endpoint health), each on its own interval (seconds/minutes/hours). A worker scheduler runs the same debounce as ping; a confirmed transition writes a log row, fires a Telegram alert + browser pop-up/sound, and pushes a `monitor.status` WS frame. Monitors pause while their device is DOWN, HTTPS records cert-expiry, and an on-demand **"Test now"** runs one check immediately. Configured in the device dialog's **Monitoring** tab (Admin+).
-- **Alert configuration from the UI (Phase 11)** — an Admin **Settings → Alerts** page: create/toggle/delete **alert rules** (per-device or global; per-event switches for down / up / flapping / orphaned) and set delivery-channel credentials (Telegram bot token, web-SSH gateway URL). Previously alert rules could only be created via SQL. *(Email delivery is a later Phase 11 item; TELEGRAM sends today.)*
+- **Alert configuration from the UI (Phase 11)** — an Admin **Settings → Alerts** page: create/toggle/delete **alert rules** (per-device or global; per-event switches for down / up / flapping / orphaned) and set delivery-channel credentials. Both **Telegram** and **email (SMTP)** deliver: configure a bot token or SMTP server (host/port/username/password/from + TLS mode, with a **"Send test"** button), and route each rule to a chat id or email address. Secrets are AES-256-GCM encrypted at rest. Previously alert rules could only be created via SQL.
 - **History charts (Phase 10)** — a **History** action (Devices row · node context menu) opens `/devices/:id/history`: a range picker (1h/6h/24h/7d/30d) over a ping group (latency avg+p95, packet loss, read-time RFC 3550 jitter, availability strip) plus one group per custom monitor (connect/response time, HTTP status-code band, availability, TLS days-to-expiry for HTTPS). Read-only Recharts; degrades to a clean "no samples" state when InfluxDB isn't configured.
 
 ## Designed, pending implementation (see [PRD.md](./PRD.md) §5 roadmap)
 
 **v1.1 — next in line (Phase 11):**
 
-- **Custom `.wav` alert sounds**, **email** channel, single **"flapping"** alert — Phase 11 (in progress; the ad-hoc **Telnet** tool and the **alert-rules CRUD + Settings→Alerts tab** already shipped); then the **housekeeping retention sweep** (Phase 11.5, priority — nothing prunes the log/session tables yet).
+- **Custom `.wav` alert sounds** — the last Phase 11 item (the ad-hoc **Telnet** tool, **alert-rules CRUD + Settings→Alerts tab**, the **email (SMTP) channel**, and the single **"flapping" alert** already shipped); then the **housekeeping retention sweep** (Phase 11.5, priority — nothing prunes the log/session tables yet).
 
 **Original roadmap (Slices 3–7):**
 
 - **Bulk discovery** (subnet CIDR sweep + Netbox import, skip-on-fail, live progress) — Slice 3.
 - **SNMP fingerprinting** (vendor/model/icon from `sysObjectID`, naming fallback chain) — Slice 4.
 - **Netbox hourly sync + ORPHANED safety flow** (never hard-delete; two-step, type-to-confirm resolution UI) — Slice 6.
-- **Alerting completions** — email channel and the single "flapping" alert.
+- **Alerting** — ✅ complete as of Phase 11 (Telegram + email/SMTP + templates + sound/pop-up + edge-triggered flapping alert).
 - **Engineer utilities** — IP calculator and the standalone drawing-only **Topology Designer** (the `designs` table/API groundwork exists).
 - **Dashboard & metrics UI**, auth/login (dev bearer token today), retention sweeps, dagre auto-arrange, maps management UI (rename/delete).
-- **System Resource Monitoring** (v1.2, PRD Pillar 16 — pending review): a `/system` page (Admin+) monitoring EchoMap itself — host CPU/mem/load (real host values via `/proc`, no privileges needed), per-container Docker stats (read-only `docker.sock` on the worker), InfluxDB `/health`+`/metrics`, nginx `stub_status`, and Go-role self-stats — collected by the worker into the existing InfluxDB, charted with the existing Recharts stack. No cAdvisor/Prometheus/Grafana.
+- **System Resource Monitoring** (v1.2, PRD Pillar 16 — ✅ design approved 2026-07-26, not yet built): a `/system` page (Admin+) monitoring EchoMap itself — host CPU/mem/load (real host values via `/proc`, no privileges needed), per-container Docker stats (read-only `docker.sock` on the worker), InfluxDB `/health`+`/metrics`, nginx `stub_status`, and Go-role self-stats — collected by the worker into the existing InfluxDB, charted with the existing Recharts stack. No cAdvisor/Prometheus/Grafana.
 
 ---
 
@@ -53,7 +53,7 @@ The nine product requirements and where each stands (details per pillar in [PRD.
 | 2 | Web-based "The Dude" alternative | ✅ Core done |
 | 3 | Custom icons, draw.io-compatible | 🟡 Upload/assign done; `.xml` import + library page pending |
 | 4 | Tools (SSH/traceroute/DNS), domain devices, manual links | ✅ Done (incl. periodic DNS re-resolution) |
-| 5 | Telegram alerts + templates + sound/pop-up | 🟡 Telegram, templates, sound/pop-up + **alert-rules config UI (Phase 11)** done; email + flapping alert pending |
+| 5 | Telegram alerts + templates + sound/pop-up | ✅ Done — Telegram + **email/SMTP**, templates, sound/pop-up, alert-rules config UI, **edge-triggered flapping alert** (all Phase 11) |
 | 6 | Multi-site / submap tree | ✅ Done |
 | 7 | Parent/child cascade (red down, green recover) | ✅ Done |
 | 8 | Device services, zero-credential launch | ✅ Done |

@@ -25,7 +25,7 @@ const monitorTick = 5 * time.Second
 // fans out a `monitor.status` WS frame, and routes an alert. Monitors are paused
 // while their device itself is DOWN (no double-alerting a dead box). b/tw/alerter
 // may be nil.
-func runMonitorScheduler(ctx context.Context, st *store.Store, b *bus.Bus, tw *tsdb.Writer, alerter *notify.Telegram, concurrency int) {
+func runMonitorScheduler(ctx context.Context, st *store.Store, b *bus.Bus, tw *tsdb.Writer, alerter *notify.Multi, concurrency int) {
 	sem := make(chan struct{}, concurrency)
 	tick := func() {
 		due, err := st.ClaimDueMonitors(ctx)
@@ -59,7 +59,7 @@ func runMonitorScheduler(ctx context.Context, st *store.Store, b *bus.Bus, tw *t
 	}
 }
 
-func checkMonitor(ctx context.Context, st *store.Store, b *bus.Bus, tw *tsdb.Writer, alerter *notify.Telegram, m store.DueMonitor) {
+func checkMonitor(ctx context.Context, st *store.Store, b *bus.Bus, tw *tsdb.Writer, alerter *notify.Multi, m store.DueMonitor) {
 	if m.DeviceStatus == "DOWN" {
 		return // device itself is down: pause its monitors, don't double-alert
 	}

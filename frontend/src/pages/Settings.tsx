@@ -42,17 +42,35 @@ export default function Settings() {
 // Delivery credentials. Reuses the already-built GET/PUT /settings/channels
 // (Phase 7). The bot token is write-only: GET returns •••••••• when one is set,
 // and echoing that back leaves it unchanged.
+interface ChannelData {
+  telegram_bot_token: string
+  telegram_template: string
+  webssh_url: string
+  email_subject_template: string
+  email_body_template: string
+  smtp: { host: string; port: number; username: string; from: string; tls: string; password: string }
+}
+const TLS_MODES = ["none", "starttls", "tls"]
+
 function ChannelsCard() {
   const { data } = useQuery({
     queryKey: ["settings", "channels"],
-    queryFn: () =>
-      api<{ telegram_bot_token: string; telegram_template: string; webssh_url: string }>(
-        "/api/v1/settings/channels",
-      ),
+    queryFn: () => api<ChannelData>("/api/v1/settings/channels"),
   })
   const [token, setToken] = useState<string | null>(null) // null = untouched
   const [webssh, setWebssh] = useState<string | null>(null)
+  // SMTP fields: null = untouched (fall back to fetched value).
+  const [host, setHost] = useState<string | null>(null)
+  const [port, setPort] = useState<string | null>(null)
+  const [user, setUser] = useState<string | null>(null)
+  const [from, setFrom] = useState<string | null>(null)
+  const [tls, setTls] = useState<string | null>(null)
+  const [pw, setPw] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
+
+  const s = data?.smtp
+  const cur = <T,>(v: T | null, fallback: T) => (v !== null ? v : fallback)
+  const smtpTouched = [host, port, user, from, tls, pw].some((v) => v !== null)
 
   const save = useMutation({
     mutationFn: () =>
@@ -61,6 +79,19 @@ function ChannelsCard() {
         body: JSON.stringify({
           ...(token !== null ? { telegram_bot_token: token } : {}),
           ...(webssh !== null ? { webssh_url: webssh } : {}),
+          ...(smtpTouched
+            ? {
+                smtp: {
+                  host: cur(host, s?.host ?? ""),
+                  port: Number(cur(port, String(s?.port ?? 0))) || 0,
+                  username: cur(user, s?.username ?? ""),
+                  from: cur(from, s?.from ?? ""),
+                  tls: cur(tls, s?.tls || "none"),
+                  // masked echo (password unchanged) keeps the stored value.
+                  password: pw !== null ? pw : (s?.password ?? ""),
+                },
+              }
+            : {}),
         }),
       }),
     onSuccess: () => {
@@ -69,12 +100,21 @@ function ChannelsCard() {
     },
   })
 
+  const [testTo, setTestTo] = useState("")
+  const [testMsg, setTestMsg] = useState<string | null>(null)
+  const test = useMutation({
+    mutationFn: () =>
+      api("/api/v1/settings/channels/test-email", { method: "POST", body: JSON.stringify({ to: testTo.trim() }) }),
+    onSuccess: () => setTestMsg("Sent — check the inbox."),
+    onError: (e) => setTestMsg(e instanceof Error ? e.message : "Send failed"),
+  })
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Delivery channels</CardTitle>
         <CardDescription>
-          Credentials the notifier uses to send alerts. The Telegram bot token is stored write-only.
+          Credentials the notifier uses to send alerts. Secrets (Telegram token, SMTP password) are stored write-only.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -88,6 +128,68 @@ function ChannelsCard() {
             onChange={(e) => setToken(e.target.value)}
           />
         </div>
+
+        <div className="space-y-2 rounded-md border p-3">
+          <p className="text-sm font-medium">SMTP (email alerts)</p>
+          <div className="grid grid-cols-[1fr_6rem] gap-2">
+            <div className="grid gap-1.5">
+              <Label className="text-xs text-muted-foreground">Host</Label>
+              <Input placeholder="smtp.example.net" value={cur(host, s?.host ?? "")} onChange={(e) => setHost(e.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label className="text-xs text-muted-foreground">Port</Label>
+              <Input
+                placeholder="587"
+                value={cur(port, String(s?.port ?? ""))}
+                onChange={(e) => setPort(e.target.value.replace(/\D/g, ""))}
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="grid gap-1.5">
+              <Label className="text-xs text-muted-foreground">Username</Label>
+              <Input placeholder="(optional)" value={cur(user, s?.username ?? "")} onChange={(e) => setUser(e.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label className="text-xs text-muted-foreground">Password</Label>
+              <Input
+                type="password"
+                placeholder={s?.password || "not set"}
+                value={pw ?? ""}
+                onChange={(e) => setPw(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="grid gap-1.5">
+              <Label className="text-xs text-muted-foreground">From address</Label>
+              <Input placeholder="alerts@example.net" value={cur(from, s?.from ?? "")} onChange={(e) => setFrom(e.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label className="text-xs text-muted-foreground">Encryption</Label>
+              <Select value={cur(tls, s?.tls || "none")} onValueChange={setTls}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {TLS_MODES.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="flex items-end gap-2">
+            <div className="grid flex-1 gap-1.5">
+              <Label className="text-xs text-muted-foreground">Send a test email to</Label>
+              <Input placeholder="you@example.net" value={testTo} onChange={(e) => setTestTo(e.target.value)} />
+            </div>
+            <Button size="sm" variant="secondary" disabled={!testTo.trim() || test.isPending} onClick={() => { setTestMsg(null); test.mutate() }}>
+              Send test
+            </Button>
+          </div>
+          {testMsg && <p className={`text-xs ${test.isError ? "text-red-500" : "text-green-500"}`}>{testMsg}</p>}
+          <p className="text-xs text-muted-foreground">
+            Save first, then test. Add an <span className="font-medium">EMAIL</span> alert rule below (target = recipient address) for alerts to fire.
+          </p>
+        </div>
+
         <div className="grid gap-1.5">
           <Label htmlFor="webssh">Web-SSH gateway URL (optional)</Label>
           <Input
@@ -98,11 +200,15 @@ function ChannelsCard() {
           />
         </div>
         <div className="flex items-center gap-3">
-          <Button size="sm" disabled={save.isPending || (token === null && webssh === null)} onClick={() => save.mutate()}>
+          <Button
+            size="sm"
+            disabled={save.isPending || (token === null && webssh === null && !smtpTouched)}
+            onClick={() => save.mutate()}
+          >
             Save channels
           </Button>
           {saved && <span className="text-xs text-green-500">Saved</span>}
-          {save.isError && <span className="text-xs text-red-500">Save failed</span>}
+          {save.isError && <span className="text-xs text-red-500">{(save.error as Error)?.message ?? "Save failed"}</span>}
         </div>
       </CardContent>
     </Card>
@@ -158,7 +264,7 @@ function AlertRulesCard() {
         <CardTitle>Alert rules</CardTitle>
         <CardDescription>
           Who gets notified, and for which events. A rule with no device applies to every device.
-          EMAIL delivery is pending — TELEGRAM sends today.
+          TELEGRAM and EMAIL both deliver (configure their channel above).
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

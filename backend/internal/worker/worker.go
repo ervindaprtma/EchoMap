@@ -26,7 +26,8 @@ func Run(ctx context.Context, cfg config.Config, st *store.Store, b *bus.Bus, tw
 	if b != nil {
 		pub = b // avoid a typed-nil interface: only assign when non-nil
 	}
-	alerter := notify.NewTelegram(st) // no-op until a bot token + TELEGRAM rule are configured
+	// Fan alerts out to every channel; each no-ops until it's configured.
+	alerter := notify.NewMulti(notify.NewTelegram(st), notify.NewEmail(st))
 	mon := monitor.New(st, pub, tw)
 	mon.Alerter = alerter
 	mon.Events = st // INFO-log confirmed transitions to event_logs (Doc 3 §10)

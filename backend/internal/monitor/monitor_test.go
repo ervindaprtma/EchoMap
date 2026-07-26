@@ -38,9 +38,10 @@ func (f *fakeStore) CascadeUp(context.Context, int64) ([]Child, error) {
 }
 
 type fakeAlerter struct {
-	calls    int
-	lastTo   string
-	affected []Child
+	calls         int
+	lastTo        string
+	affected      []Child
+	flappingFires int
 }
 
 func (a *fakeAlerter) StatusAlert(_ context.Context, _ Device, _, to string, affected []Child) {
@@ -48,6 +49,8 @@ func (a *fakeAlerter) StatusAlert(_ context.Context, _ Device, _, to string, aff
 	a.lastTo = to
 	a.affected = affected
 }
+
+func (a *fakeAlerter) FlappingAlert(_ context.Context, _ Device) { a.flappingFires++ }
 
 type fakePub struct{ events []bus.StatusEvent }
 
@@ -86,8 +89,9 @@ func TestDebounceRequiresConsecutiveProbes(t *testing.T) {
 }
 
 func TestFlappingFlagSetWhenTransitionsExceedThreshold(t *testing.T) {
-	st, pub := &fakeStore{transitions: FlapThreshold}, &fakePub{} // next transition pushes count over
+	st, pub, al := &fakeStore{transitions: FlapThreshold}, &fakePub{}, &fakeAlerter{} // next transition pushes count over
 	m := New(st, pub, nil)
+	m.Alerter = al
 	d := Device{ID: 1, IP: "10.0.0.1", Status: "UP"}
 	ctx := context.Background()
 
@@ -99,6 +103,14 @@ func TestFlappingFlagSetWhenTransitionsExceedThreshold(t *testing.T) {
 	}
 	if last := pub.events[len(pub.events)-1]; !last.IsFlapping {
 		t.Fatalf("expected published event to carry is_flapping=true, got %+v", last)
+	}
+	// Entering flapping fires exactly one flapping alert (edge-triggered)...
+	if al.flappingFires != 1 {
+		t.Fatalf("expected 1 flapping alert on entering the state, got %d", al.flappingFires)
+	}
+	// ...and the per-transition status alert is suppressed while flapping.
+	if al.calls != 0 {
+		t.Fatalf("expected the per-transition alert to be suppressed while flapping, got %d calls", al.calls)
 	}
 }
 

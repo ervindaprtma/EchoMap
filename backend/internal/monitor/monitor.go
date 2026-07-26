@@ -44,6 +44,9 @@ type Child struct {
 // the children themselves never alert.
 type Alerter interface {
 	StatusAlert(ctx context.Context, d Device, from, to string, affectedChildren []Child)
+	// FlappingAlert fires once when a device enters the flapping state, so
+	// operators learn *why* per-transition alerts went quiet (Doc 3 §2).
+	FlappingAlert(ctx context.Context, d Device)
 }
 
 type Metrics interface {
@@ -141,12 +144,16 @@ func (m *Monitor) Evaluate(ctx context.Context, d Device, alive bool, rttMs floa
 	}
 	_ = m.store.RecordTransition(ctx, d.ID, newStatus)
 
-	// 3) Flap flag (alert *suppression* itself lands in Slice 7).
+	// 3) Flap flag: while flapping, per-transition alerts (step 6) are suppressed;
+	// entering the state fires ONE flapping alert so the quiet is explained.
 	if count, err := m.store.CountTransitions(ctx, d.ID, FlapWindow); err == nil {
 		switch {
 		case count > FlapThreshold && !st.isFlapping:
 			st.isFlapping = true
 			_ = m.store.SetFlapping(ctx, d.ID, true)
+			if m.Alerter != nil {
+				m.Alerter.FlappingAlert(ctx, d)
+			}
 		case count <= FlapThreshold && st.isFlapping:
 			st.isFlapping = false
 			_ = m.store.SetFlapping(ctx, d.ID, false)
@@ -171,8 +178,8 @@ func (m *Monitor) Evaluate(ctx context.Context, d Device, alive bool, rttMs floa
 	affected := m.cascade(ctx, d, newStatus)
 
 	// 6) One aggregated alert for this device; cascaded children stay silent.
-	// While flapping, per-transition alerts are suppressed too.
-	// ponytail: the single "flapping" alert itself lands with the full notifier in Slice 7.
+	// While flapping, per-transition alerts are suppressed (the single flapping
+	// alert already fired in step 3 when the state was entered).
 	if m.Alerter != nil && !st.isFlapping {
 		m.Alerter.StatusAlert(ctx, d, from, newStatus, affected)
 	}

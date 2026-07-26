@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -17,9 +18,10 @@ type TelegramConfig struct {
 }
 
 type TelegramRule struct {
-	ChatID string
-	OnDown bool
-	OnUp   bool
+	ChatID     string
+	OnDown     bool
+	OnUp       bool
+	OnFlapping bool
 }
 
 // TelegramConfigFor loads settings + the enabled TELEGRAM rules that apply to
@@ -49,7 +51,7 @@ func (s *Store) TelegramConfigFor(ctx context.Context, deviceID int64) (Telegram
 	}
 
 	rows, err := s.pool.Query(ctx, `
-		SELECT target, on_down, on_up FROM alert_rules
+		SELECT target, on_down, on_up, on_flapping FROM alert_rules
 		WHERE channel = 'TELEGRAM' AND enabled AND (device_id IS NULL OR device_id = $1)`, deviceID)
 	if err != nil {
 		return cfg, err
@@ -58,7 +60,7 @@ func (s *Store) TelegramConfigFor(ctx context.Context, deviceID int64) (Telegram
 
 	for rows.Next() {
 		var r TelegramRule
-		if err := rows.Scan(&r.ChatID, &r.OnDown, &r.OnUp); err != nil {
+		if err := rows.Scan(&r.ChatID, &r.OnDown, &r.OnUp, &r.OnFlapping); err != nil {
 			return cfg, err
 		}
 		cfg.Rules = append(cfg.Rules, r)
@@ -173,14 +175,98 @@ func (s *Store) DeleteAlertRule(ctx context.Context, id int64) error {
 }
 
 // RecordAlertEvent audits one delivery attempt (alert_events, Doc 2 §1.7).
-func (s *Store) RecordAlertEvent(ctx context.Context, deviceID int64, from, to string, flapping, delivered bool, errMsg string) error {
+func (s *Store) RecordAlertEvent(ctx context.Context, deviceID int64, from, to, channel string, flapping, delivered bool, errMsg string) error {
 	var e *string
 	if errMsg != "" {
 		e = &errMsg
 	}
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO alert_events (device_id, from_status, to_status, is_flapping, channel, delivered, error)
-		VALUES ($1, NULLIF($2, '')::device_status, $3::device_status, $4, 'TELEGRAM', $5, $6)`,
-		deviceID, from, to, flapping, delivered, e)
+		VALUES ($1, NULLIF($2, '')::device_status, $3::device_status, $4, $5::alert_channel, $6, $7)`,
+		deviceID, from, to, flapping, channel, delivered, e)
 	return err
+}
+
+// EmailConfig is what the notifier needs for one email alert: SMTP transport,
+// optional operator subject/body templates, and the enabled EMAIL rules (each
+// target is a recipient address) that apply to deviceID.
+type EmailConfig struct {
+	SMTP    SMTPDialConfig
+	Subject string // email_subject_template ("" → notifier default)
+	Body    string // email_body_template ("" → notifier default)
+	Rules   []EmailRule
+}
+
+// SMTPDialConfig is the decrypted transport config (password in plaintext, only
+// here and only toward the notifier).
+type SMTPDialConfig struct {
+	Host     string
+	Port     int
+	Username string
+	Password string
+	From     string
+	TLS      string // "none" | "starttls" | "tls"
+}
+
+type EmailRule struct {
+	ToAddr     string
+	OnDown     bool
+	OnUp       bool
+	OnFlapping bool
+}
+
+// EmailConfigFor loads the SMTP transport + enabled EMAIL rules that apply to
+// deviceID (global rules + device-scoped). Returns a zero SMTP host when email
+// isn't configured — the notifier treats that as "not configured" and no-ops.
+func (s *Store) EmailConfigFor(ctx context.Context, deviceID int64) (EmailConfig, error) {
+	var cfg EmailConfig
+	var smtpRaw []byte
+	var subj, body *string
+	err := s.pool.QueryRow(ctx, `
+		SELECT smtp_config, email_subject_template, email_body_template
+		FROM settings WHERE id = 1`).Scan(&smtpRaw, &subj, &body)
+	if err != nil {
+		return cfg, err
+	}
+	if len(smtpRaw) == 0 {
+		return cfg, nil // email not configured
+	}
+	var sc smtpConfigJSON
+	if err := json.Unmarshal(smtpRaw, &sc); err != nil || sc.Host == "" {
+		return cfg, nil
+	}
+	pass := sc.Password
+	if pass != "" && s.secrets != nil {
+		plain, err := s.secrets.Decrypt(sc.Password)
+		if err != nil {
+			return cfg, fmt.Errorf("decrypt smtp password (key rotated?): %w", err)
+		}
+		pass = plain
+	}
+	cfg.SMTP = SMTPDialConfig{
+		Host: sc.Host, Port: sc.Port, Username: sc.Username,
+		Password: pass, From: sc.From, TLS: sc.TLS,
+	}
+	if subj != nil {
+		cfg.Subject = *subj
+	}
+	if body != nil {
+		cfg.Body = *body
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT target, on_down, on_up, on_flapping FROM alert_rules
+		WHERE channel = 'EMAIL' AND enabled AND (device_id IS NULL OR device_id = $1)`, deviceID)
+	if err != nil {
+		return cfg, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r EmailRule
+		if err := rows.Scan(&r.ToAddr, &r.OnDown, &r.OnUp, &r.OnFlapping); err != nil {
+			return cfg, err
+		}
+		cfg.Rules = append(cfg.Rules, r)
+	}
+	return cfg, rows.Err()
 }

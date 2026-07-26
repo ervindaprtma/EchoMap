@@ -70,7 +70,7 @@ func (t *Telegram) StatusAlert(ctx context.Context, d monitor.Device, from, to s
 			errMsg = err.Error()
 			log.Printf("notify: telegram send to %s failed: %v", r.ChatID, err)
 		}
-		_ = t.store.RecordAlertEvent(ctx, d.ID, from, to, false, err == nil, errMsg)
+		_ = t.store.RecordAlertEvent(ctx, d.ID, from, to, "TELEGRAM", false, err == nil, errMsg)
 
 		// Event log: ALERT on delivery, ERROR on failure (Doc 3 §10).
 		level, msg := "ALERT", fmt.Sprintf("telegram alert %s → %s for %s (%s)", from, to, d.Name, d.IP)
@@ -116,10 +116,41 @@ func (t *Telegram) MonitorAlert(ctx context.Context, deviceID int64, label, kind
 	}
 }
 
-func render(tmplSrc string, d monitor.Device, from, to string, affected []monitor.Child) string {
-	if tmplSrc == "" {
-		tmplSrc = defaultTemplate
+// FlappingAlert fires once when a device enters the flapping state, gated by
+// each rule's on_flapping toggle. Event-logged, not recorded in alert_events
+// (which is status-transition-scoped).
+func (t *Telegram) FlappingAlert(ctx context.Context, d monitor.Device) {
+	cfg, err := t.store.TelegramConfigFor(ctx, d.ID)
+	if err != nil {
+		log.Printf("notify: load telegram config (flapping): %v", err)
+		return
 	}
+	if cfg.BotToken == "" || len(cfg.Rules) == 0 {
+		return
+	}
+	text := fmt.Sprintf("⚠️ *%s* (%s) is flapping — repeated up/down transitions; per-change alerts are muted until it stabilises.", d.Name, d.IP)
+	for _, r := range cfg.Rules {
+		if !r.OnFlapping {
+			continue
+		}
+		err := t.send(ctx, cfg.BotToken, r.ChatID, text)
+		level, msg := "ALERT", fmt.Sprintf("telegram flapping alert for %s (%s)", d.Name, d.IP)
+		if err != nil {
+			level, msg = "ERROR", fmt.Sprintf("telegram flapping alert failed for %s: %v", d.Name, err)
+			log.Printf("notify: telegram flapping send to %s failed: %v", r.ChatID, err)
+		}
+		id := d.ID
+		_ = t.store.InsertEventLog(ctx, level, "alert", msg, &id, nil,
+			map[string]any{"channel": "TELEGRAM", "delivered": err == nil, "flapping": true})
+	}
+}
+
+func render(tmplSrc string, d monitor.Device, from, to string, affected []monitor.Child) string {
+	return renderText(tmplSrc, defaultTemplate, buildVars(d, from, to, affected))
+}
+
+// buildVars assembles the template variables shared by every channel.
+func buildVars(d monitor.Device, from, to string, affected []monitor.Child) templateVars {
 	names := make([]string, 0, 6)
 	for i, c := range affected {
 		if i == 5 {
@@ -128,20 +159,27 @@ func render(tmplSrc string, d monitor.Device, from, to string, affected []monito
 		}
 		names = append(names, c.Name)
 	}
-	vars := templateVars{
+	return templateVars{
 		Name: d.Name, IP: d.IP, From: from, To: to,
 		Time:             time.Now().UTC().Format("2006-01-02 15:04:05 UTC"),
 		AffectedChildren: len(affected),
 		ChildNames:       strings.Join(names, ", "),
 	}
+}
 
-	tmpl, err := template.New("alert").Parse(tmplSrc)
-	if err != nil { // a bad operator template must never kill alerting (Doc 3 §7)
-		tmpl = template.Must(template.New("alert").Parse(defaultTemplate))
+// renderText renders src (falling back to fallback on empty or a parse error —
+// a bad operator template must never kill alerting, Doc 3 §7).
+func renderText(src, fallback string, vars templateVars) string {
+	if src == "" {
+		src = fallback
+	}
+	tmpl, err := template.New("alert").Parse(src)
+	if err != nil {
+		tmpl = template.Must(template.New("alert").Parse(fallback))
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, vars); err != nil {
-		return fmt.Sprintf("%s (%s) %s → %s", d.Name, d.IP, from, to)
+		return fmt.Sprintf("%s (%s) %s → %s", vars.Name, vars.IP, vars.From, vars.To)
 	}
 	return buf.String()
 }
