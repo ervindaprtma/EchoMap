@@ -25,3 +25,6 @@
 # misc
 .DS_Store
 *.log
+
+# TLS certs (self-signed or user-provided) — never commit private keys
+/certs/

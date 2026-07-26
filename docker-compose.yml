@@ -14,7 +14,7 @@ services:
       INFLUX_ORG: echomap
       INFLUX_BUCKET: ping_metrics
     ports:
-      - "8080:8080"       # REST + WS (optional direct access; the frontend proxies these too)
+      - "${API_PORT:-8080}:8080"   # optional direct API access; the frontend proxies these too
     cap_add:
       - NET_RAW           # on-demand single-shot pings (test reachability)
     depends_on:
@@ -55,7 +55,13 @@ services:
     build: ./frontend
     image: echomap-frontend:latest
     ports:
-      - "80:80"           # the app's single public entrypoint
+      # Public entrypoint. Change WEB_HTTP_PORT / WEB_HTTPS_PORT in .env to publish
+      # EchoMap on ANY host port (e.g. 8080/8443); container stays on 80/443.
+      - "${WEB_HTTP_PORT:-80}:80"
+      - "${WEB_HTTPS_PORT:-443}:443"
+    volumes:
+      # Drop your own tls.crt + tls.key here to replace the auto self-signed cert.
+      - ./certs:/etc/nginx/certs
     depends_on:
       app: { condition: service_healthy }
     restart: unless-stopped
@@ -101,7 +107,7 @@ services:
       DOCKER_INFLUXDB_INIT_BUCKET: ping_metrics
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN}
     ports:
-      - "8086:8086"
+      - "${INFLUX_PORT:-8086}:8086"   # InfluxDB UI + API — browse raw ping_metrics / monitor_metrics
     volumes:
       - influxdata:/var/lib/influxdb2
     healthcheck:

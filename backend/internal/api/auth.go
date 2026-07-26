@@ -55,15 +55,24 @@ func clientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
+// reqIsHTTPS reports whether the browser reached us over TLS. Behind a
+// TLS-terminating reverse proxy (the frontend nginx) r.TLS is nil, so we also
+// trust X-Forwarded-Proto, which our proxy always sets. Trusting it is safe: the
+// flag only ever makes the cookie MORE restrictive (HTTPS-only), so a spoofed
+// header can at most lock the spoofer's own session to HTTPS.
+func reqIsHTTPS(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
 // setSessionCookie issues the HttpOnly session cookie. Secure tracks the actual
-// connection so it works over plain-HTTP dev yet is Secure behind TLS in prod.
+// scheme so it works over plain-HTTP dev yet is Secure behind TLS in prod.
 func setSessionCookie(w http.ResponseWriter, r *http.Request, raw string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
 		Value:    raw,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   reqIsHTTPS(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(store.SessionMaxLifetime.Seconds()),
 	})
@@ -75,7 +84,7 @@ func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   reqIsHTTPS(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})

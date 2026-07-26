@@ -39,6 +39,7 @@
 - **Alerting completions** — email channel and the single "flapping" alert.
 - **Engineer utilities** — IP calculator and the standalone drawing-only **Topology Designer** (the `designs` table/API groundwork exists).
 - **Dashboard & metrics UI**, auth/login (dev bearer token today), retention sweeps, dagre auto-arrange, maps management UI (rename/delete).
+- **System Resource Monitoring** (v1.2, PRD Pillar 16 — pending review): a `/system` page (Admin+) monitoring EchoMap itself — host CPU/mem/load (real host values via `/proc`, no privileges needed), per-container Docker stats (read-only `docker.sock` on the worker), InfluxDB `/health`+`/metrics`, nginx `stub_status`, and Go-role self-stats — collected by the worker into the existing InfluxDB, charted with the existing Recharts stack. No cAdvisor/Prometheus/Grafana.
 
 ---
 
@@ -157,7 +158,16 @@ cp .env.example .env                  # fill in the secrets (INFLUX_TOKEN, APP_E
 docker compose up -d --build          # builds every image (incl. the frontend) and starts everything
 ```
 
-No Node, no `npm install`, no `npm run build` on the host — each service builds inside its own image. Open **http://localhost/** (nginx serves the SPA on `:80` and reverse-proxies `/api` + `/ws` to the `app` role, so it's single-origin). The API is also directly reachable on `:8080` if you want it.
+No Node, no `npm install`, no `npm run build` on the host — each service builds inside its own image. Open **https://localhost/** (TLS) or **http://localhost/** — nginx serves the SPA and reverse-proxies `/api` + `/ws` to the `app` role, so it's single-origin. A **self-signed TLS cert** is auto-generated on first start (the browser will warn — expected for internal use); to use a real cert, drop `tls.crt` + `tls.key` into `./certs/`.
+
+**Custom ports.** The published host ports are env-driven — set any of these in `.env` to expose EchoMap wherever you like (the containers still listen on 80/443/8080/8086 internally):
+
+```bash
+WEB_HTTP_PORT=80      WEB_HTTPS_PORT=443     # SPA over HTTP / TLS  (e.g. WEB_HTTPS_PORT=8443)
+API_PORT=8080         INFLUX_PORT=8086       # direct API / InfluxDB UI
+```
+
+**Raw metrics.** The InfluxDB UI is at **http://localhost:8086** (or your `INFLUX_PORT`) — sign in as `echomap` (`DOCKER_INFLUXDB_INIT_PASSWORD`), org `echomap`, and use **Data Explorer** to browse the `ping_metrics` bucket (`ping_metrics` + `monitor_metrics` measurements). The admin API token is your `INFLUX_TOKEN`.
 
 The Postgres schema in `backend/migrations/` (`0001` + `0002` + `0003` + `0004`) is applied automatically on the container's **first boot** (via the `docker-entrypoint-initdb.d` mount) — no manual migration step. There is no online migration runner yet, so applying a new migration to an **existing** database is a manual `psql -f` (an upgrade-hardening item). The API listens on `:8080`: `GET /healthz` and `POST /api/v1/auth/login` are open; everything else authenticates by the `echomap_session` cookie (browsers) or the static `APP_API_TOKEN` bearer (automation). On first boot, sign in as **`admin`** with `APP_ADMIN_PASSWORD` and set a new password when prompted.
 
